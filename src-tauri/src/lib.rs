@@ -429,7 +429,8 @@ fn apply_effect(app: &AppHandle, effect: Effect, state: &State) {
     match effect {
         Effect::Show => {
             align_overlay(app, state.game_hwnd);
-            set_click_through(app, true);
+            // Markup started from the settings window survives switching to the game.
+            set_click_through(app, !*app.state::<AppState>().markup.lock().unwrap());
             let _ = window.show();
         }
         Effect::Hide | Effect::Disable => {
@@ -446,7 +447,7 @@ fn apply_effect(app: &AppHandle, effect: Effect, state: &State) {
             if let Some(hwnd) = state.game_hwnd {
                 win32::focus_window(hwnd);
             }
-            set_click_through(app, true);
+            set_click_through(app, !*app.state::<AppState>().markup.lock().unwrap());
         }
     }
 }
@@ -485,6 +486,13 @@ fn dispatch(app: &AppHandle, event: Event) {
     }
     if previous.kind == Kind::Inactive && next.kind != Kind::Inactive {
         cancel_phrase_wheel(app);
+    }
+    // Keyed on the event, not on a Hide effect: markup started from the settings
+    // window begins in Hidden, and Hidden to Hidden produces no effect at all.
+    if matches!(event, Event::Foreground { is_overlay: false, .. })
+        && matches!(next.kind, Kind::Hidden | Kind::Off)
+    {
+        stop_markup(app);
     }
 
     for effect in result.effects {
@@ -1142,6 +1150,42 @@ fn phrase_wheel_shortcut_steps(
 }
 
 #[cfg(test)]
+mod markup_tests {
+    use super::markup_unavailable;
+    use crate::states::Kind;
+
+    #[test]
+    fn needs_a_game_in_front() {
+        assert_eq!(
+            markup_unavailable(Kind::Off, None, None).as_deref(),
+            Some("Сначала откройте игру")
+        );
+        assert_eq!(markup_unavailable(Kind::Inactive, Some("dota2.exe"), None), None);
+    }
+
+    #[test]
+    fn needs_the_requested_game_in_front() {
+        let expected = format!("Сначала откройте {}", "Dota 2");
+        assert_eq!(
+            markup_unavailable(Kind::Off, None, Some(("dota2.exe", "Dota 2"))),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            markup_unavailable(Kind::Inactive, Some("cs2.exe"), Some(("dota2.exe", "Dota 2"))),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn allows_the_game_right_behind_the_settings_window() {
+        assert_eq!(
+            markup_unavailable(Kind::Hidden, Some("dota2.exe"), Some(("Dota2.exe", "Dota 2"))),
+            None
+        );
+    }
+}
+
+#[cfg(test)]
 mod foreground_tests {
     use super::foreground_event;
     use crate::states::Event;
@@ -1360,7 +1404,7 @@ fn save_zones(app: AppHandle, exe: String, inactive: Zone, active: Zone) -> Resu
         profile.active = active;
     }
     let config = save_config(&app, config)?;
-    toggle_markup(app, false);
+    toggle_markup(app, false, None)?;
     Ok(config)
 }
 
@@ -1826,20 +1870,55 @@ fn dismiss(app: AppHandle) {
     std::thread::spawn(move || dispatch(&app, Event::Dismiss));
 }
 
+/// Markup draws on the game window that is in front (or right behind the
+/// settings window), so it needs one, and it has to be the requested game.
+fn markup_unavailable(
+    kind: Kind,
+    game_exe: Option<&str>,
+    requested: Option<(&str, &str)>,
+) -> Option<String> {
+    match requested {
+        Some((exe, title)) if !game_exe.is_some_and(|game| game.eq_ignore_ascii_case(exe)) => {
+            Some(format!("Сначала откройте {title}"))
+        }
+        _ if kind == Kind::Off => Some("Сначала откройте игру".into()),
+        _ => None,
+    }
+}
+
+/// Leaves markup mode without handing focus anywhere: the game went away or
+/// the overlay was paused, so focus has already moved on.
+fn stop_markup(app: &AppHandle) {
+    let was_on = std::mem::replace(&mut *app.state::<AppState>().markup.lock().unwrap(), false);
+    if !was_on {
+        return;
+    }
+    set_click_through(app, true);
+    let _ = app.emit("overlay:markup", serde_json::json!({ "active": false }));
+}
+
 #[tauri::command]
-fn toggle_markup(app: AppHandle, on: bool) {
+fn toggle_markup(app: AppHandle, on: bool, exe: Option<String>) -> Result<(), String> {
+    let state = app.state::<AppState>().state.lock().unwrap().clone();
+    if on {
+        let config = get_config(app.clone());
+        let requested = exe.as_deref().map(|exe| {
+            let title = config.profile(exe).map_or(exe, |profile| profile.title.as_str());
+            (exe, title)
+        });
+        if let Some(error) = markup_unavailable(state.kind, state.game_exe.as_deref(), requested) {
+            return Err(error);
+        }
+    }
+
     *app.state::<AppState>().markup.lock().unwrap() = on;
     if on {
         cancel_phrase_wheel(&app);
     }
-    let state = app.state::<AppState>().state.lock().unwrap().clone();
     *app.state::<AppState>().game_foreground.lock().unwrap() = !on && state.kind == Kind::Inactive;
     schedule_single_key_chat_shortcut_sync(&app);
 
     if on {
-        if state.kind == Kind::Off {
-            return;
-        }
         align_overlay(&app, state.game_hwnd);
         set_click_through(&app, false);
         if let Some(window) = overlay_window(&app) {
@@ -1855,6 +1934,7 @@ fn toggle_markup(app: AppHandle, on: bool) {
     }
 
     let _ = app.emit("overlay:markup", serde_json::json!({ "active": on }));
+    Ok(())
 }
 
 #[tauri::command]
@@ -1926,6 +2006,7 @@ fn set_paused(app: &AppHandle, paused: bool) {
         }
         *app.state::<AppState>().state.lock().unwrap() = State::default();
         *app.state::<AppState>().game_foreground.lock().unwrap() = false;
+        stop_markup(app);
         schedule_single_key_chat_shortcut_sync(app);
         let _ = app.emit(
             "overlay:state",
@@ -2078,7 +2159,11 @@ pub fn run() {
                     if markup_hotkey.as_deref() == Some(pressed.as_str()) {
                         let markup = *app.state::<AppState>().markup.lock().unwrap();
                         let app = app.clone();
-                        std::thread::spawn(move || toggle_markup(app, !markup));
+                        std::thread::spawn(move || {
+                            if let Err(error) = toggle_markup(app, !markup, None) {
+                                log(&format!("markup hotkey ignored: {error}"));
+                            }
+                        });
                         return;
                     }
 

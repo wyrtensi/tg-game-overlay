@@ -77,7 +77,7 @@ expressed as fractions of the window (see `src/core/zones.ts`).
 | `save_zones` | `{ exe: string, inactive: Zone, active: Zone }` | `Config` |
 | `send_message` | `{ requestId: string, text: string }` | `void` (prototype: echoes the text back as a message) |
 | `dismiss` | - | `void` (Esc or a sent message: back to inactive, focus to the game) |
-| `toggle_markup` | `{ on: boolean }` | `void` |
+| `toggle_markup` | `{ on: boolean, exe?: string }` | `void`; turning it on throws a string when no game is in front or `exe` is not the game in front. Markup also ends on its own (`overlay:markup` with `active: false`) when focus moves to another application or the overlay is paused |
 | `open_main_window` | - | `void` |
 | `set_chat` | `{ chat: ChatRef \| null }` | `Config` (the single mirrored chat) |
 | `send_sticker` | `{ requestId: string, fileId: string }` | `void` |
