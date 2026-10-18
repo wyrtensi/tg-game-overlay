@@ -625,6 +625,15 @@ class OverlayApp {
     this.videosByMessageId.clear();
     this.stickToBottom = true;
     this.clearPendingAttachment();
+    // A reset means another chat, transport or account: its sticker packs
+    // (and their file ids) may not exist there, so ask again on next open.
+    this.stickerPacks = [];
+    this.stickerPacksRequested = false;
+    this.stickerPickerState = { status: "idle" };
+    this.selectedStickerPackId = null;
+    this.stickerSearchQuery = "";
+    this.stickerPanelOpen = false;
+    this.renderStickerPanel();
     this.render();
   }
 

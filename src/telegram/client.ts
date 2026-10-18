@@ -516,6 +516,8 @@ export class TelegramWorker {
     const previousClient = this.client;
     this.client = null;
     this.clearAccountCaches();
+    // The next account may be another one: drop the old feed and sticker picker.
+    await safeInvoke("reset_overlay_feed");
     if (previousClient) {
       try {
         await previousClient.disconnect();
@@ -602,6 +604,7 @@ export class TelegramWorker {
     }
     // tg_logout already cleared the stored session secret before emitting
     // tg:login{step:"logout"} - we only report the resulting state here.
+    await safeInvoke("reset_overlay_feed");
     await this.reportStatus({ state: "offline" });
   }
 

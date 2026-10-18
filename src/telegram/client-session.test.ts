@@ -23,6 +23,7 @@ interface Subject {
   reconnectNow: () => Promise<{ kind: string }>;
   requireReauthentication: (expected?: unknown) => Promise<void>;
   newClient: (session: string) => unknown;
+  logout: () => Promise<void>;
   reconnectLoop: { stop: () => void };
 }
 
@@ -115,5 +116,13 @@ describe("TelegramWorker keeps the saved session", () => {
 
     subject.client = failingClient({ errorMessage: "SESSION_REVOKED" });
     expect(await subject.reconnectNow()).toEqual({ kind: "reauth_required" });
+  });
+
+  test("logging out clears the overlay feed and sticker picker of the old account", async () => {
+    const subject = new TelegramWorker() as unknown as Subject;
+
+    await subject.logout();
+
+    expect(calls.map((call) => call.command)).toEqual(["reset_overlay_feed", "tg_status"]);
   });
 });
