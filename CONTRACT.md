@@ -57,6 +57,15 @@ expressed as fractions of the window (see `src/core/zones.ts`).
 
 ## Commands exposed by Rust (`invoke`)
 
+Commands that write settings or secrets, or list other running windows, answer only the
+`main` window: `set_hotkey`, `set_markup_hotkey`, `set_direction_settings`,
+`set_phrase_wheel_settings`, `set_feed_settings`, `set_language`, `set_flags`,
+`upsert_profile`, `remove_profile`, `add_current_app`, `add_profile_by_exe`,
+`list_profile_candidates`, `set_chat`, `set_transport`, `set_relay_settings`,
+`tg_save_api_keys`, `tg_clear_api_keys`, `tg_login_step` and `tg_logout`. The message id
+cache (`get/set_direction_message_id`, `get/set_phrase_message_id`) answers only `telegram`,
+like the session and key commands. Any other window gets an error string.
+
 | Command | Args | Returns |
 |---|---|---|
 | `get_config` | - | `Config` |
@@ -68,7 +77,7 @@ expressed as fractions of the window (see `src/core/zones.ts`).
 | `set_phrase_wheel_settings` | `{ settings: PhraseWheelSettings }` | `Config` |
 | `set_feed_settings` | `{ settings: FeedSettings }` | `Config` |
 | `set_language` | `{ language: "auto" \| "en" \| "ru" \| "zh" }` | `Config`; every page re-translates on `config:changed`, the tray menu is rebuilt |
-| `set_flags` | `{ autostart: boolean, demoFeed: boolean }` | `Config` |
+| `set_flags` | `{ autostart: boolean, demoFeed: boolean }` | `Config`; `autostart` writes or removes the `tg-game-overlay` value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` (also re-applied at every start) and throws a string when that fails |
 | `upsert_profile` | `{ profile: Profile }` | `Config` |
 | `remove_profile` | `{ exe: string }` | `Config` |
 | `add_current_app` | - | `Config` (legacy: adds the last foreground app as a profile) |
@@ -77,7 +86,7 @@ expressed as fractions of the window (see `src/core/zones.ts`).
 | `save_zones` | `{ exe: string, inactive: Zone, active: Zone }` | `Config` |
 | `send_message` | `{ requestId: string, text: string }` | `void` (prototype: echoes the text back as a message) |
 | `dismiss` | - | `void` (Esc or a sent message: back to inactive, focus to the game) |
-| `toggle_markup` | `{ on: boolean }` | `void` |
+| `toggle_markup` | `{ on: boolean, exe?: string }` | `void`; turning it on throws a string when no game is in front or `exe` is not the game in front. Markup also ends on its own (`overlay:markup` with `active: false`) when focus moves to another application or the overlay is paused |
 | `open_main_window` | - | `void` |
 | `set_chat` | `{ chat: ChatRef \| null }` | `Config` (the single mirrored chat) |
 | `send_sticker` | `{ requestId: string, fileId: string }` | `void` |

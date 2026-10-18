@@ -233,6 +233,20 @@ mod tests {
     }
 
     #[test]
+    fn hides_when_focus_moves_to_another_window_of_the_app() {
+        let settings = Event::Foreground {
+            exe: None,
+            hwnd: 11,
+            is_overlay: false,
+        };
+        let state = apply(&[game()]);
+        let result = transition(&state, &settings, &mode_of);
+        assert_eq!(result.state.kind, Kind::Hidden);
+        assert_eq!(result.state.game_hwnd, Some(42));
+        assert_eq!(result.effects, vec![Effect::Hide]);
+    }
+
+    #[test]
     fn comes_back_passive_when_the_game_returns() {
         assert_eq!(apply(&[game(), Event::Hotkey, other(), game()]).kind, Kind::Inactive);
     }

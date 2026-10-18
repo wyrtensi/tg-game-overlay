@@ -62,8 +62,10 @@ impl KeyEdgeTracker {
 pub struct DirectionInputGate;
 
 impl DirectionInputGate {
-    pub fn enabled(kind: Kind, markup: bool, paused: bool) -> bool {
-        kind == Kind::Inactive && !markup && !paused
+    /// Keys are read globally, so they count only while the game itself has
+    /// focus: typing arrows into the settings window must not send signals.
+    pub fn enabled(kind: Kind, markup: bool, paused: bool, game_foreground: bool) -> bool {
+        kind == Kind::Inactive && game_foreground && !markup && !paused
     }
 }
 
@@ -102,11 +104,12 @@ mod tests {
     }
 
     #[test]
-    fn observes_only_passive_unpaused_game_state() {
-        assert!(!DirectionInputGate::enabled(Kind::Active, false, false));
-        assert!(!DirectionInputGate::enabled(Kind::Inactive, true, false));
-        assert!(!DirectionInputGate::enabled(Kind::Inactive, false, true));
-        assert!(DirectionInputGate::enabled(Kind::Inactive, false, false));
+    fn observes_only_passive_unpaused_game_state_with_the_game_in_front() {
+        assert!(!DirectionInputGate::enabled(Kind::Active, false, false, true));
+        assert!(!DirectionInputGate::enabled(Kind::Inactive, true, false, true));
+        assert!(!DirectionInputGate::enabled(Kind::Inactive, false, true, true));
+        assert!(!DirectionInputGate::enabled(Kind::Inactive, false, false, false));
+        assert!(DirectionInputGate::enabled(Kind::Inactive, false, false, true));
     }
 
     #[test]

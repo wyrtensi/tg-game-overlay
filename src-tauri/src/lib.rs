@@ -57,7 +57,8 @@ pub struct AppState {
     state: Mutex<State>,
     game_foreground: Mutex<bool>,
     single_key_open_pending: AtomicBool,
-    chat_shortcut_error: Mutex<Option<String>>,
+    /// Hotkeys that could not be registered, published as one warning line.
+    shortcut_errors: Mutex<ShortcutErrors>,
     config_path: PathBuf,
     runtime_cache: Mutex<RuntimeCacheV1>,
     runtime_cache_path: PathBuf,
@@ -152,6 +153,24 @@ fn is_single_key_shortcut(hotkey: &str) -> bool {
     !hotkey.contains('+')
 }
 
+/// Settings store and show the Windows key as "Win", while global-hotkey only
+/// understands "Super", so the name is swapped right before parsing.
+fn parse_hotkey(hotkey: &str) -> Result<Shortcut, String> {
+    hotkey
+        .split('+')
+        .map(|part| {
+            if part.trim().eq_ignore_ascii_case("win") {
+                "Super"
+            } else {
+                part
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("+")
+        .parse::<Shortcut>()
+        .map_err(|error| error.to_string())
+}
+
 fn should_register_chat_shortcut(
     hotkey: &str,
     kind: Kind,
@@ -177,15 +196,54 @@ fn chat_shortcut_error_after_attempt(
     }
 }
 
-fn set_chat_shortcut_error(app: &AppHandle, error: Option<String>) {
-    let app_state = app.state::<AppState>();
-    let mut current = app_state.chat_shortcut_error.lock().unwrap();
-    if *current == error {
-        return;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShortcutSlot {
+    Chat,
+    Markup,
+    PhraseWheel,
+}
+
+/// One registration error per hotkey, so that a success for one of them never
+/// clears a failure reported for another.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ShortcutErrors {
+    chat: Option<String>,
+    markup: Option<String>,
+    phrase_wheel: Option<String>,
+}
+
+impl ShortcutErrors {
+    fn slot_mut(&mut self, slot: ShortcutSlot) -> &mut Option<String> {
+        match slot {
+            ShortcutSlot::Chat => &mut self.chat,
+            ShortcutSlot::Markup => &mut self.markup,
+            ShortcutSlot::PhraseWheel => &mut self.phrase_wheel,
+        }
     }
-    *current = error.clone();
-    drop(current);
-    let _ = app.emit("overlay:chat_shortcut_error", error);
+
+    /// The pages show a single line; the chat key matters most.
+    fn published(&self) -> Option<String> {
+        self.chat
+            .clone()
+            .or_else(|| self.markup.clone())
+            .or_else(|| self.phrase_wheel.clone())
+    }
+}
+
+fn published_shortcut_error(app: &AppHandle) -> Option<String> {
+    app.state::<AppState>().shortcut_errors.lock().unwrap().published()
+}
+
+fn set_shortcut_error(app: &AppHandle, slot: ShortcutSlot, error: Option<String>) {
+    let app_state = app.state::<AppState>();
+    let mut errors = app_state.shortcut_errors.lock().unwrap();
+    let before = errors.published();
+    *errors.slot_mut(slot) = error;
+    let after = errors.published();
+    drop(errors);
+    if before != after {
+        let _ = app.emit("overlay:chat_shortcut_error", after);
+    }
 }
 
 fn sync_single_key_chat_shortcut(app: &AppHandle) {
@@ -203,7 +261,7 @@ fn sync_single_key_chat_shortcut(app: &AppHandle) {
     let game_foreground = *app_state.game_foreground.lock().unwrap();
     let should_register =
         should_register_chat_shortcut(hotkey, kind, markup, paused, game_foreground);
-    let Ok(shortcut) = hotkey.parse::<Shortcut>() else {
+    let Ok(shortcut) = parse_hotkey(hotkey) else {
         return;
     };
     let manager = app.global_shortcut();
@@ -217,15 +275,15 @@ fn sync_single_key_chat_shortcut(app: &AppHandle) {
         if let Err(error) = &attempt {
             log(&format!("failed to register chat key {hotkey}: {error}"));
         }
-        let previous = app_state.chat_shortcut_error.lock().unwrap().clone();
+        let previous = app_state.shortcut_errors.lock().unwrap().chat.clone();
         let error = chat_shortcut_error_after_attempt(previous.as_deref(), hotkey, Some(attempt));
-        set_chat_shortcut_error(app, error);
+        set_shortcut_error(app, ShortcutSlot::Chat, error);
     } else if manager.is_registered(shortcut.clone()) {
         match manager.unregister(shortcut) {
-            Ok(()) => set_chat_shortcut_error(app, None),
+            Ok(()) => set_shortcut_error(app, ShortcutSlot::Chat, None),
             Err(error) => {
                 log(&format!("failed to unregister chat key {hotkey}: {error}"));
-                set_chat_shortcut_error(app, Some(format!(
+                set_shortcut_error(app, ShortcutSlot::Chat, Some(format!(
                     "Не удалось освободить клавишу {hotkey}: {error}. Перезапустите приложение."
                 )));
             }
@@ -236,6 +294,22 @@ fn sync_single_key_chat_shortcut(app: &AppHandle) {
 fn schedule_single_key_chat_shortcut_sync(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || sync_single_key_chat_shortcut(&app));
+}
+
+/// Only the overlay itself keeps the current state. Every other window of the
+/// app (settings, dialogs, the tray menu) is not the game: it hides the overlay
+/// like a foreign application and can never match a profile, whatever the exe.
+fn foreground_event(
+    hwnd: isize,
+    exe: Option<String>,
+    is_own: bool,
+    overlay_hwnd: Option<isize>,
+) -> Event {
+    Event::Foreground {
+        exe: if is_own { None } else { exe },
+        hwnd,
+        is_overlay: overlay_hwnd == Some(hwnd),
+    }
 }
 
 fn overlay_window(app: &AppHandle) -> Option<WebviewWindow> {
@@ -355,7 +429,8 @@ fn apply_effect(app: &AppHandle, effect: Effect, state: &State) {
     match effect {
         Effect::Show => {
             align_overlay(app, state.game_hwnd);
-            set_click_through(app, true);
+            // Markup started from the settings window survives switching to the game.
+            set_click_through(app, !*app.state::<AppState>().markup.lock().unwrap());
             let _ = window.show();
         }
         Effect::Hide | Effect::Disable => {
@@ -372,7 +447,7 @@ fn apply_effect(app: &AppHandle, effect: Effect, state: &State) {
             if let Some(hwnd) = state.game_hwnd {
                 win32::focus_window(hwnd);
             }
-            set_click_through(app, true);
+            set_click_through(app, !*app.state::<AppState>().markup.lock().unwrap());
         }
     }
 }
@@ -411,6 +486,13 @@ fn dispatch(app: &AppHandle, event: Event) {
     }
     if previous.kind == Kind::Inactive && next.kind != Kind::Inactive {
         cancel_phrase_wheel(app);
+    }
+    // Keyed on the event, not on a Hide effect: markup started from the settings
+    // window begins in Hidden, and Hidden to Hidden produces no effect at all.
+    if matches!(event, Event::Foreground { is_overlay: false, .. })
+        && matches!(next.kind, Kind::Hidden | Kind::Off)
+    {
+        stop_markup(app);
     }
 
     for effect in result.effects {
@@ -455,8 +537,7 @@ fn sync_overlay(app: AppHandle) {
         },
     );
     push_zones(&app, &config);
-    let shortcut_error = app.state::<AppState>().chat_shortcut_error.lock().unwrap().clone();
-    let _ = app.emit("overlay:chat_shortcut_error", shortcut_error);
+    let _ = app.emit("overlay:chat_shortcut_error", published_shortcut_error(&app));
     request_telegram_history(&app);
 }
 
@@ -479,7 +560,7 @@ fn get_config(app: AppHandle) -> Config {
 
 #[tauri::command]
 fn get_chat_shortcut_error(app: AppHandle) -> Option<String> {
-    app.state::<AppState>().chat_shortcut_error.lock().unwrap().clone()
+    published_shortcut_error(&app)
 }
 
 #[derive(serde::Deserialize)]
@@ -506,7 +587,12 @@ fn is_hex_color(value: &str) -> bool {
 }
 
 #[tauri::command]
-fn set_feed_settings(app: AppHandle, settings: FeedSettings) -> Result<Config, String> {
+fn set_feed_settings(
+    app: AppHandle,
+    window: WebviewWindow,
+    settings: FeedSettings,
+) -> Result<Config, String> {
+    require_main_window(&window)?;
     let mut config = get_config(app.clone());
     config.ttl_ms = settings.ttl_ms.clamp(3_000, 60_000);
     config.opacity = settings.opacity.clamp(0.0, 1.0);
@@ -554,7 +640,8 @@ fn set_feed_settings(app: AppHandle, settings: FeedSettings) -> Result<Config, S
 }
 
 #[tauri::command]
-fn set_language(app: AppHandle, language: String) -> Result<Config, String> {
+fn set_language(app: AppHandle, window: WebviewWindow, language: String) -> Result<Config, String> {
+    require_main_window(&window)?;
     if !matches!(language.as_str(), "auto" | "en" | "ru" | "zh") {
         return Err(format!("Неизвестный язык: {language}"));
     }
@@ -565,18 +652,60 @@ fn set_language(app: AppHandle, language: String) -> Result<Config, String> {
     Ok(config)
 }
 
-#[tauri::command]
-fn set_flags(app: AppHandle, autostart: bool, demo_feed: bool) -> Result<Config, String> {
-    let mut config = get_config(app.clone());
-    config.autostart = autostart;
-    config.demo_feed = demo_feed;
-    save_config(&app, config)
+/// Name of the HKCU Run value, after the product.
+const AUTOSTART_VALUE: &str = "tg-game-overlay";
+
+/// Points the Run value at the running executable, so a moved install heals
+/// itself on the next start, or removes the value.
+fn apply_autostart(enabled: bool) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let command = if enabled {
+            let exe = std::env::current_exe()
+                .map_err(|error| format!("Не удалось настроить автозапуск: {error}"))?;
+            Some(format!("\"{}\"", exe.display()))
+        } else {
+            None
+        };
+        win32::set_run_at_login(AUTOSTART_VALUE, command.as_deref())
+            .map_err(|error| format!("Не удалось настроить автозапуск: {error}"))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = enabled;
+        Ok(())
+    }
 }
 
 #[tauri::command]
-fn set_hotkey(app: AppHandle, hotkey: String, markup: Option<bool>) -> Result<Config, String> {
-    let shortcut: Shortcut = hotkey
-        .parse()
+fn set_flags(
+    app: AppHandle,
+    window: WebviewWindow,
+    autostart: bool,
+    demo_feed: bool,
+) -> Result<Config, String> {
+    require_main_window(&window)?;
+    let mut config = get_config(app.clone());
+    let previous_autostart = config.autostart;
+    apply_autostart(autostart)?;
+    config.autostart = autostart;
+    config.demo_feed = demo_feed;
+    save_config(&app, config).inspect_err(|_| {
+        if let Err(error) = apply_autostart(previous_autostart) {
+            log(&format!("failed to roll back autostart: {error}"));
+        }
+    })
+}
+
+#[tauri::command]
+fn set_hotkey(
+    app: AppHandle,
+    window: WebviewWindow,
+    hotkey: String,
+    markup: Option<bool>,
+) -> Result<Config, String> {
+    require_main_window(&window)?;
+    let shortcut = parse_hotkey(&hotkey)
         .map_err(|_| format!("Не удалось разобрать сочетание: {hotkey}"))?;
 
     let mut config = get_config(app.clone());
@@ -591,7 +720,7 @@ fn set_hotkey(app: AppHandle, hotkey: String, markup: Option<bool>) -> Result<Co
         config.hotkey.clone()
     };
 
-    if previous.parse::<Shortcut>().ok().as_ref() == Some(&shortcut) {
+    if parse_hotkey(&previous).ok().as_ref() == Some(&shortcut) {
         return Ok(config);
     }
     let other = if is_markup_shortcut {
@@ -599,8 +728,8 @@ fn set_hotkey(app: AppHandle, hotkey: String, markup: Option<bool>) -> Result<Co
     } else {
         &config.markup_hotkey
     };
-    if other.parse::<Shortcut>().ok().as_ref() == Some(&shortcut)
-        || config.phrase_wheel.hotkey.parse::<Shortcut>().ok().as_ref() == Some(&shortcut)
+    if parse_hotkey(other).ok().as_ref() == Some(&shortcut)
+        || parse_hotkey(&config.phrase_wheel.hotkey).ok().as_ref() == Some(&shortcut)
     {
         return Err("Это сочетание уже используется другой функцией приложения".into());
     }
@@ -628,7 +757,7 @@ fn set_hotkey(app: AppHandle, hotkey: String, markup: Option<bool>) -> Result<Co
             }
             "unregister:old" => {
                 if unregister_old {
-                    if let Ok(old) = previous.parse::<Shortcut>() {
+                    if let Ok(old) = parse_hotkey(&previous) {
                         if manager.is_registered(old.clone()) {
                             if let Err(error) = manager.unregister(old) {
                                 if registered_new {
@@ -649,16 +778,23 @@ fn set_hotkey(app: AppHandle, hotkey: String, markup: Option<bool>) -> Result<Co
     }
 
     let config = save_config(&app, config)?;
-    if !is_markup_shortcut {
-        set_chat_shortcut_error(&app, None);
-    }
+    let slot = if is_markup_shortcut {
+        ShortcutSlot::Markup
+    } else {
+        ShortcutSlot::Chat
+    };
+    set_shortcut_error(&app, slot, None);
     schedule_single_key_chat_shortcut_sync(&app);
     Ok(config)
 }
 
 #[tauri::command]
-fn set_markup_hotkey(app: AppHandle, hotkey: String) -> Result<Config, String> {
-    set_hotkey(app, hotkey, Some(true))
+fn set_markup_hotkey(
+    app: AppHandle,
+    window: WebviewWindow,
+    hotkey: String,
+) -> Result<Config, String> {
+    set_hotkey(app, window, hotkey, Some(true))
 }
 
 fn publish_direction(app: &AppHandle, direction: input::Direction) {
@@ -714,6 +850,7 @@ fn observe_direction_keys(app: AppHandle) {
             let kind = app_state.state.lock().unwrap().kind;
             let markup = *app_state.markup.lock().unwrap();
             let paused = *app_state.paused.lock().unwrap();
+            let game_foreground = *app_state.game_foreground.lock().unwrap();
             let keys = [
                 settings.up_key.as_str(),
                 settings.down_key.as_str(),
@@ -735,7 +872,9 @@ fn observe_direction_keys(app: AppHandle) {
             }
             escape_was_down = escape_is_down;
 
-            if settings.enabled && input::DirectionInputGate::enabled(kind, markup, paused) {
+            if settings.enabled
+                && input::DirectionInputGate::enabled(kind, markup, paused, game_foreground)
+            {
                 for direction in edges {
                     publish_direction(&app, direction);
                 }
@@ -889,7 +1028,12 @@ fn release_phrase_wheel(app: &AppHandle) {
 }
 
 #[tauri::command]
-fn set_direction_settings(app: AppHandle, settings: DirectionSettings) -> Result<Config, String> {
+fn set_direction_settings(
+    app: AppHandle,
+    window: WebviewWindow,
+    settings: DirectionSettings,
+) -> Result<Config, String> {
+    require_main_window(&window)?;
     let mut config = get_config(app.clone());
     config.direction_signals = normalize_direction_settings(settings)?;
     save_config(&app, config)
@@ -898,23 +1042,23 @@ fn set_direction_settings(app: AppHandle, settings: DirectionSettings) -> Result
 #[tauri::command]
 fn set_phrase_wheel_settings(
     app: AppHandle,
+    window: WebviewWindow,
     settings: PhraseWheelSettings,
 ) -> Result<Config, String> {
+    require_main_window(&window)?;
     cancel_phrase_wheel(&app);
     let mut config = get_config(app.clone());
     let settings = normalize_phrase_wheel_settings(settings)?;
-    let shortcut: Shortcut = settings
-        .hotkey
-        .parse()
+    let shortcut = parse_hotkey(&settings.hotkey)
         .map_err(|_| format!("Не удалось разобрать сочетание: {}", settings.hotkey))?;
     for reserved in [&config.hotkey, &config.markup_hotkey] {
-        if reserved.parse::<Shortcut>().ok().as_ref() == Some(&shortcut) {
+        if parse_hotkey(reserved).ok().as_ref() == Some(&shortcut) {
             return Err("Это сочетание уже используется другой функцией приложения".into());
         }
     }
 
     let previous = config.phrase_wheel.clone();
-    let same_shortcut = previous.hotkey.parse::<Shortcut>().ok().as_ref() == Some(&shortcut);
+    let same_shortcut = parse_hotkey(&previous.hotkey).ok().as_ref() == Some(&shortcut);
     for step in phrase_wheel_shortcut_steps(previous.enabled, settings.enabled, same_shortcut) {
         match *step {
             "register:new" => app
@@ -922,7 +1066,7 @@ fn set_phrase_wheel_settings(
                 .register(shortcut.clone())
                 .map_err(|error| format!("Сочетание занято другой программой: {error}"))?,
             "unregister:old" => {
-                if let Ok(old) = previous.hotkey.parse::<Shortcut>() {
+                if let Ok(old) = parse_hotkey(&previous.hotkey) {
                     if let Err(error) = app.global_shortcut().unregister(old) {
                         if settings.enabled && !same_shortcut {
                             let _ = app.global_shortcut().unregister(shortcut.clone());
@@ -934,27 +1078,45 @@ fn set_phrase_wheel_settings(
             _ => {}
         }
     }
+    // The same hotkey kept after it failed to register at startup is retried
+    // here instead of being reported as fine.
+    if settings.enabled && !app.global_shortcut().is_registered(shortcut) {
+        app.global_shortcut()
+            .register(shortcut)
+            .map_err(|error| format!("Сочетание занято другой программой: {error}"))?;
+    }
     config.phrase_wheel = settings;
-    save_config(&app, config)
+    let config = save_config(&app, config)?;
+    set_shortcut_error(&app, ShortcutSlot::PhraseWheel, None);
+    Ok(config)
 }
 
 #[tauri::command]
-fn get_direction_message_id(app: AppHandle, account_id: String, chat_key: String) -> Option<i32> {
+fn get_direction_message_id(
+    app: AppHandle,
+    window: WebviewWindow,
+    account_id: String,
+    chat_key: String,
+) -> Result<Option<i32>, String> {
+    require_telegram_worker(&window)?;
     let cache_key = direction_cache_key(&account_id, &chat_key);
-    app.state::<AppState>()
+    Ok(app
+        .state::<AppState>()
         .runtime_cache
         .lock()
         .unwrap()
-        .get(&cache_key)
+        .get(&cache_key))
 }
 
 #[tauri::command]
 fn set_direction_message_id(
     app: AppHandle,
+    window: WebviewWindow,
     account_id: String,
     chat_key: String,
     message_id: i32,
 ) -> Result<(), String> {
+    require_telegram_worker(&window)?;
     let cache_key = direction_cache_key(&account_id, &chat_key);
     let app_state = app.state::<AppState>();
     let snapshot = {
@@ -966,13 +1128,26 @@ fn set_direction_message_id(
 }
 
 #[tauri::command]
-fn get_phrase_message_id(app: AppHandle, account_id: String, chat_key: String) -> Option<i32> {
+fn get_phrase_message_id(
+    app: AppHandle,
+    window: WebviewWindow,
+    account_id: String,
+    chat_key: String,
+) -> Result<Option<i32>, String> {
+    require_telegram_worker(&window)?;
     let cache_key = format!("phrase|{}", direction_cache_key(&account_id, &chat_key));
-    app.state::<AppState>().runtime_cache.lock().unwrap().get(&cache_key)
+    Ok(app.state::<AppState>().runtime_cache.lock().unwrap().get(&cache_key))
 }
 
 #[tauri::command]
-fn set_phrase_message_id(app: AppHandle, account_id: String, chat_key: String, message_id: i32) -> Result<(), String> {
+fn set_phrase_message_id(
+    app: AppHandle,
+    window: WebviewWindow,
+    account_id: String,
+    chat_key: String,
+    message_id: i32,
+) -> Result<(), String> {
+    require_telegram_worker(&window)?;
     let cache_key = format!("phrase|{}", direction_cache_key(&account_id, &chat_key));
     let app_state = app.state::<AppState>();
     let snapshot = {
@@ -1057,9 +1232,85 @@ fn phrase_wheel_shortcut_steps(
 }
 
 #[cfg(test)]
+mod markup_tests {
+    use super::markup_unavailable;
+    use crate::states::Kind;
+
+    #[test]
+    fn needs_a_game_in_front() {
+        assert_eq!(
+            markup_unavailable(Kind::Off, None, None).as_deref(),
+            Some("Сначала откройте игру")
+        );
+        assert_eq!(markup_unavailable(Kind::Inactive, Some("dota2.exe"), None), None);
+    }
+
+    #[test]
+    fn needs_the_requested_game_in_front() {
+        let expected = format!("Сначала откройте {}", "Dota 2");
+        assert_eq!(
+            markup_unavailable(Kind::Off, None, Some(("dota2.exe", "Dota 2"))),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            markup_unavailable(Kind::Inactive, Some("cs2.exe"), Some(("dota2.exe", "Dota 2"))),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn allows_the_game_right_behind_the_settings_window() {
+        assert_eq!(
+            markup_unavailable(Kind::Hidden, Some("dota2.exe"), Some(("Dota2.exe", "Dota 2"))),
+            None
+        );
+    }
+}
+
+#[cfg(test)]
+mod foreground_tests {
+    use super::foreground_event;
+    use crate::states::Event;
+
+    fn unpack(event: Event) -> (Option<String>, bool) {
+        match event {
+            Event::Foreground { exe, is_overlay, .. } => (exe, is_overlay),
+            other => panic!("unexpected event {other:?}"),
+        }
+    }
+
+    #[test]
+    fn recognizes_the_overlay_root_owner() {
+        let event = foreground_event(0x42, Some("tg-game-overlay.exe".into()), true, Some(0x42));
+        assert!(unpack(event).1);
+    }
+
+    #[test]
+    fn treats_the_settings_window_as_a_foreign_application() {
+        let event = foreground_event(0x43, Some("tg-game-overlay.exe".into()), true, Some(0x42));
+        assert_eq!(unpack(event), (None, false));
+    }
+
+    #[test]
+    fn keeps_the_exe_of_other_applications() {
+        let event = foreground_event(0x44, Some("dota2.exe".into()), false, Some(0x42));
+        assert_eq!(unpack(event), (Some("dota2.exe".into()), false));
+    }
+}
+
+#[cfg(test)]
 mod shortcut_tests {
-    use super::{chat_shortcut_error_after_attempt, normalize_phrase_wheel_settings, phrase_wheel_shortcut_steps, replacement_steps};
+    use super::{chat_shortcut_error_after_attempt, normalize_phrase_wheel_settings, parse_hotkey, phrase_wheel_shortcut_steps, replacement_steps, ShortcutErrors, ShortcutSlot};
     use crate::config::PhraseWheelSettings;
+
+    #[test]
+    fn parses_the_win_modifier_shown_by_the_settings_page() {
+        let win = parse_hotkey("Ctrl+Win+T").unwrap();
+        assert_eq!(Ok(win), parse_hotkey("Ctrl+Super+T"));
+        assert_eq!(parse_hotkey("win+Shift+K"), parse_hotkey("Super+Shift+K"));
+        assert!(parse_hotkey("Ctrl+Shift+M").is_ok());
+        assert!(parse_hotkey("Win").is_err());
+    }
 
     #[test]
     fn registers_the_new_shortcut_before_releasing_the_old_one() {
@@ -1085,6 +1336,21 @@ mod shortcut_tests {
             None
         );
         assert_eq!(chat_shortcut_error_after_attempt(Some(&error), "T", None), Some(error));
+    }
+
+    #[test]
+    fn a_chat_key_success_keeps_a_markup_failure_visible() {
+        let mut errors = ShortcutErrors::default();
+        *errors.slot_mut(ShortcutSlot::Markup) = Some("markup".into());
+        *errors.slot_mut(ShortcutSlot::Chat) = Some("chat".into());
+        assert_eq!(errors.published().as_deref(), Some("chat"));
+
+        *errors.slot_mut(ShortcutSlot::Chat) = None;
+        assert_eq!(errors.published().as_deref(), Some("markup"));
+
+        *errors.slot_mut(ShortcutSlot::Markup) = None;
+        *errors.slot_mut(ShortcutSlot::PhraseWheel) = Some("wheel".into());
+        assert_eq!(errors.published().as_deref(), Some("wheel"));
     }
 
     #[test]
@@ -1120,7 +1386,8 @@ mod shortcut_tests {
 }
 
 #[tauri::command]
-fn upsert_profile(app: AppHandle, profile: Profile) -> Result<Config, String> {
+fn upsert_profile(app: AppHandle, window: WebviewWindow, profile: Profile) -> Result<Config, String> {
+    require_main_window(&window)?;
     let mut config = get_config(app.clone());
     let exe = profile.exe.to_lowercase();
     match config
@@ -1135,7 +1402,8 @@ fn upsert_profile(app: AppHandle, profile: Profile) -> Result<Config, String> {
 }
 
 #[tauri::command]
-fn remove_profile(app: AppHandle, exe: String) -> Result<Config, String> {
+fn remove_profile(app: AppHandle, window: WebviewWindow, exe: String) -> Result<Config, String> {
+    require_main_window(&window)?;
     let mut config = get_config(app.clone());
     let exe = exe.to_lowercase();
     config
@@ -1145,7 +1413,8 @@ fn remove_profile(app: AppHandle, exe: String) -> Result<Config, String> {
 }
 
 #[tauri::command]
-fn add_current_app(app: AppHandle) -> Result<Config, String> {
+fn add_current_app(app: AppHandle, window: WebviewWindow) -> Result<Config, String> {
+    require_main_window(&window)?;
     #[cfg(windows)]
     {
         let info = win32::foreground_info();
@@ -1172,7 +1441,8 @@ fn add_current_app(app: AppHandle) -> Result<Config, String> {
 }
 
 #[tauri::command]
-fn add_profile_by_exe(app: AppHandle, value: String) -> Result<Config, String> {
+fn add_profile_by_exe(app: AppHandle, window: WebviewWindow, value: String) -> Result<Config, String> {
+    require_main_window(&window)?;
     let exe = normalize_profile_exe(&value)?;
     let mut config = get_config(app.clone());
     if config.profile(&exe).is_none() {
@@ -1190,20 +1460,24 @@ struct ProfileCandidatePayload {
 }
 
 #[tauri::command]
-fn list_profile_candidates() -> Vec<ProfileCandidatePayload> {
+fn list_profile_candidates(
+    window: WebviewWindow,
+) -> Result<Vec<ProfileCandidatePayload>, String> {
+    // The list names every visible window, so only the settings window gets it.
+    require_main_window(&window)?;
     #[cfg(windows)]
     {
-        win32::profile_candidates()
+        Ok(win32::profile_candidates()
             .into_iter()
             .map(|candidate| ProfileCandidatePayload {
                 exe: candidate.exe,
                 title: candidate.title,
             })
-            .collect()
+            .collect())
     }
     #[cfg(not(windows))]
     {
-        Vec::new()
+        Ok(Vec::new())
     }
 }
 
@@ -1220,7 +1494,7 @@ fn save_zones(app: AppHandle, exe: String, inactive: Zone, active: Zone) -> Resu
         profile.active = active;
     }
     let config = save_config(&app, config)?;
-    toggle_markup(app, false);
+    toggle_markup(app, false, None)?;
     Ok(config)
 }
 
@@ -1294,6 +1568,17 @@ fn require_telegram_worker(window: &WebviewWindow) -> Result<(), String> {
     }
 }
 
+/// Settings, secrets and the list of running windows belong to the settings
+/// window: the overlay and the workers render chat content from other people
+/// and must not be able to change or read them.
+fn require_main_window(window: &WebviewWindow) -> Result<(), String> {
+    if window.label() == MAIN {
+        Ok(())
+    } else {
+        Err("This command is only available to the settings window".into())
+    }
+}
+
 const RELAY_ACCESS_KEY: &str = "relay_access_key";
 const RELAY_PASSWORD: &str = "relay_password";
 
@@ -1334,10 +1619,12 @@ fn update_relay_secret(dir: &PathBuf, name: &str, value: Option<String>) -> Resu
 #[tauri::command]
 fn set_relay_settings(
     app: AppHandle,
+    window: WebviewWindow,
     settings: RelaySettings,
     access_key: Option<String>,
     password: Option<String>,
 ) -> Result<Config, String> {
+    require_main_window(&window)?;
     let settings = RelaySettings {
         url: settings.url.trim().to_string(),
         room: settings.room.trim().to_string(),
@@ -1364,25 +1651,41 @@ fn set_relay_settings(
 }
 
 #[tauri::command]
-fn set_transport(app: AppHandle, transport: String) -> Result<Config, String> {
+fn set_transport(app: AppHandle, window: WebviewWindow, transport: String) -> Result<Config, String> {
+    require_main_window(&window)?;
     if transport != TRANSPORT_TELEGRAM && transport != TRANSPORT_RELAY {
         return Err(format!("Неизвестный способ связи: {transport}"));
     }
-    let mut config = get_config(app.clone());
-    if config.transport == transport {
-        return Ok(config);
-    }
-    config.transport = transport;
+    let app_state = app.state::<AppState>();
+    // The switch lands in memory first: from_inactive_worker drops the old
+    // worker from here on, so nothing it sends can slip in after the reset.
+    let (config, previous_transport) = {
+        let mut current = app_state.config.lock().unwrap();
+        if current.transport == transport {
+            return Ok(current.clone());
+        }
+        let previous = std::mem::replace(&mut current.transport, transport);
+        (current.clone(), previous)
+    };
     let offline = serde_json::json!({ "state": "offline" });
-    {
-        let app_state = app.state::<AppState>();
-        *app_state.connected.lock().unwrap() = false;
-        *app_state.telegram_status.lock().unwrap() = offline.clone();
-    }
+    let previous_connected = std::mem::replace(&mut *app_state.connected.lock().unwrap(), false);
+    let previous_status =
+        std::mem::replace(&mut *app_state.telegram_status.lock().unwrap(), offline.clone());
     let _ = app.emit("overlay:reset", serde_json::json!({}));
     let _ = app.emit("tg:status", offline);
-    // Saving last broadcasts config:changed, which is what the workers react to.
-    save_config(&app, config)
+
+    if let Err(error) = config.save(&app_state.config_path) {
+        // The workers never saw config:changed: hand the chat back to the old one.
+        app_state.config.lock().unwrap().transport = previous_transport;
+        *app_state.connected.lock().unwrap() = previous_connected;
+        *app_state.telegram_status.lock().unwrap() = previous_status.clone();
+        let _ = app.emit("tg:status", previous_status);
+        request_telegram_history(&app);
+        return Err(error);
+    }
+    // config:changed is what the workers react to.
+    push_config(&app, &config);
+    Ok(config)
 }
 
 /// False in public builds: users bring their own api_id / api_hash.
@@ -1412,7 +1715,13 @@ fn emit_api_keys_changed(app: &AppHandle, api_id: i32, api_hash: String) {
 }
 
 #[tauri::command]
-fn tg_save_api_keys(app: AppHandle, api_id: i32, api_hash: String) -> Result<Config, String> {
+fn tg_save_api_keys(
+    app: AppHandle,
+    window: WebviewWindow,
+    api_id: i32,
+    api_hash: String,
+) -> Result<Config, String> {
+    require_main_window(&window)?;
     let dir = app
         .state::<AppState>()
         .config_path
@@ -1429,7 +1738,8 @@ fn tg_save_api_keys(app: AppHandle, api_id: i32, api_hash: String) -> Result<Con
 }
 
 #[tauri::command]
-fn tg_clear_api_keys(app: AppHandle) -> Result<Config, String> {
+fn tg_clear_api_keys(app: AppHandle, window: WebviewWindow) -> Result<Config, String> {
+    require_main_window(&window)?;
     let dir = app
         .state::<AppState>()
         .config_path
@@ -1487,7 +1797,8 @@ fn tg_clear_session(app: AppHandle, window: WebviewWindow) {
 }
 
 #[tauri::command]
-fn tg_logout(app: AppHandle) {
+fn tg_logout(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+    require_main_window(&window)?;
     let dir = app
         .state::<AppState>()
         .config_path
@@ -1497,15 +1808,23 @@ fn tg_logout(app: AppHandle) {
     secrets::clear(&dir, "session");
     *app.state::<AppState>().connected.lock().unwrap() = false;
     let _ = app.emit("tg:login", serde_json::json!({ "step": "logout" }));
+    Ok(())
 }
 
 /// Login steps typed by the user in the settings window: phone, code, password.
 #[tauri::command]
-fn tg_login_step(app: AppHandle, step: String, value: String) {
+fn tg_login_step(
+    app: AppHandle,
+    window: WebviewWindow,
+    step: String,
+    value: String,
+) -> Result<(), String> {
+    require_main_window(&window)?;
     let _ = app.emit(
         "tg:login",
         serde_json::json!({ "step": step, "value": value }),
     );
+    Ok(())
 }
 
 #[tauri::command]
@@ -1640,7 +1959,8 @@ fn tg_phrase(app: AppHandle, window: WebviewWindow, payload: serde_json::Value) 
 }
 
 #[tauri::command]
-fn set_chat(app: AppHandle, chat: Option<ChatRef>) -> Result<Config, String> {
+fn set_chat(app: AppHandle, window: WebviewWindow, chat: Option<ChatRef>) -> Result<Config, String> {
+    require_main_window(&window)?;
     if let Some(selected) = &chat {
         if !matches!(selected.kind.as_str(), "user" | "chat" | "channel")
             || selected.id.trim().is_empty()
@@ -1686,20 +2006,55 @@ fn dismiss(app: AppHandle) {
     std::thread::spawn(move || dispatch(&app, Event::Dismiss));
 }
 
+/// Markup draws on the game window that is in front (or right behind the
+/// settings window), so it needs one, and it has to be the requested game.
+fn markup_unavailable(
+    kind: Kind,
+    game_exe: Option<&str>,
+    requested: Option<(&str, &str)>,
+) -> Option<String> {
+    match requested {
+        Some((exe, title)) if !game_exe.is_some_and(|game| game.eq_ignore_ascii_case(exe)) => {
+            Some(format!("Сначала откройте {title}"))
+        }
+        _ if kind == Kind::Off => Some("Сначала откройте игру".into()),
+        _ => None,
+    }
+}
+
+/// Leaves markup mode without handing focus anywhere: the game went away or
+/// the overlay was paused, so focus has already moved on.
+fn stop_markup(app: &AppHandle) {
+    let was_on = std::mem::replace(&mut *app.state::<AppState>().markup.lock().unwrap(), false);
+    if !was_on {
+        return;
+    }
+    set_click_through(app, true);
+    let _ = app.emit("overlay:markup", serde_json::json!({ "active": false }));
+}
+
 #[tauri::command]
-fn toggle_markup(app: AppHandle, on: bool) {
+fn toggle_markup(app: AppHandle, on: bool, exe: Option<String>) -> Result<(), String> {
+    let state = app.state::<AppState>().state.lock().unwrap().clone();
+    if on {
+        let config = get_config(app.clone());
+        let requested = exe.as_deref().map(|exe| {
+            let title = config.profile(exe).map_or(exe, |profile| profile.title.as_str());
+            (exe, title)
+        });
+        if let Some(error) = markup_unavailable(state.kind, state.game_exe.as_deref(), requested) {
+            return Err(error);
+        }
+    }
+
     *app.state::<AppState>().markup.lock().unwrap() = on;
     if on {
         cancel_phrase_wheel(&app);
     }
-    let state = app.state::<AppState>().state.lock().unwrap().clone();
     *app.state::<AppState>().game_foreground.lock().unwrap() = !on && state.kind == Kind::Inactive;
     schedule_single_key_chat_shortcut_sync(&app);
 
     if on {
-        if state.kind == Kind::Off {
-            return;
-        }
         align_overlay(&app, state.game_hwnd);
         set_click_through(&app, false);
         if let Some(window) = overlay_window(&app) {
@@ -1715,6 +2070,7 @@ fn toggle_markup(app: AppHandle, on: bool) {
     }
 
     let _ = app.emit("overlay:markup", serde_json::json!({ "active": on }));
+    Ok(())
 }
 
 #[tauri::command]
@@ -1786,6 +2142,7 @@ fn set_paused(app: &AppHandle, paused: bool) {
         }
         *app.state::<AppState>().state.lock().unwrap() = State::default();
         *app.state::<AppState>().game_foreground.lock().unwrap() = false;
+        stop_markup(app);
         schedule_single_key_chat_shortcut_sync(app);
         let _ = app.emit(
             "overlay:state",
@@ -1801,17 +2158,9 @@ fn set_paused(app: &AppHandle, paused: bool) {
     #[cfg(windows)]
     {
         let info = win32::foreground_info();
+        let event = foreground_event(info.hwnd, info.exe, info.is_own, overlay_hwnd(app));
         let app = app.clone();
-        std::thread::spawn(move || {
-            dispatch(
-                &app,
-                Event::Foreground {
-                    exe: info.exe,
-                    hwnd: info.hwnd,
-                    is_overlay: info.is_own,
-                },
-            );
-        });
+        std::thread::spawn(move || dispatch(&app, event));
     }
 }
 
@@ -1886,20 +2235,13 @@ pub fn run() {
                 .with_handler(|app, shortcut, event| {
                     let config = app.state::<AppState>().config.lock().unwrap().clone();
                     let pressed = shortcut.to_string();
-                    let chat_hotkey = config
-                        .hotkey
-                        .parse::<Shortcut>()
+                    let chat_hotkey = parse_hotkey(&config.hotkey)
                         .ok()
                         .map(|value| value.to_string());
-                    let markup_hotkey = config
-                        .markup_hotkey
-                        .parse::<Shortcut>()
+                    let markup_hotkey = parse_hotkey(&config.markup_hotkey)
                         .ok()
                         .map(|value| value.to_string());
-                    let phrase_wheel_hotkey = config
-                        .phrase_wheel
-                        .hotkey
-                        .parse::<Shortcut>()
+                    let phrase_wheel_hotkey = parse_hotkey(&config.phrase_wheel.hotkey)
                         .ok()
                         .map(|value| value.to_string());
 
@@ -1953,7 +2295,11 @@ pub fn run() {
                     if markup_hotkey.as_deref() == Some(pressed.as_str()) {
                         let markup = *app.state::<AppState>().markup.lock().unwrap();
                         let app = app.clone();
-                        std::thread::spawn(move || toggle_markup(app, !markup));
+                        std::thread::spawn(move || {
+                            if let Err(error) = toggle_markup(app, !markup, None) {
+                                log(&format!("markup hotkey ignored: {error}"));
+                            }
+                        });
                         return;
                     }
 
@@ -2052,7 +2398,7 @@ pub fn run() {
                 state: Mutex::new(State::default()),
                 game_foreground: Mutex::new(false),
                 single_key_open_pending: AtomicBool::new(false),
-                chat_shortcut_error: Mutex::new(None),
+                shortcut_errors: Mutex::new(ShortcutErrors::default()),
                 config_path,
                 runtime_cache: Mutex::new(runtime_cache),
                 runtime_cache_path,
@@ -2065,17 +2411,30 @@ pub fn run() {
                 phrase_wheel: Mutex::new(phrase_wheel::WheelLifecycle::default()),
             });
 
-            let mut hotkeys = vec![config.markup_hotkey.clone()];
+            // A single-key chat hotkey is registered only while a game is in
+            // front; sync_single_key_chat_shortcut reports its own failures.
+            let mut hotkeys = vec![(ShortcutSlot::Markup, config.markup_hotkey.clone())];
             if !is_single_key_shortcut(&config.hotkey) {
-                hotkeys.push(config.hotkey.clone());
+                hotkeys.push((ShortcutSlot::Chat, config.hotkey.clone()));
             }
             if config.phrase_wheel.enabled {
-                hotkeys.push(config.phrase_wheel.hotkey.clone());
+                hotkeys.push((ShortcutSlot::PhraseWheel, config.phrase_wheel.hotkey.clone()));
             }
-            for hotkey in hotkeys {
-                if let Ok(shortcut) = hotkey.parse::<Shortcut>() {
-                    let _ = app.global_shortcut().register(shortcut);
+            for (slot, hotkey) in hotkeys {
+                let attempt = parse_hotkey(&hotkey).and_then(|shortcut| {
+                    app.global_shortcut()
+                        .register(shortcut)
+                        .map_err(|error| error.to_string())
+                });
+                if let Err(error) = &attempt {
+                    log(&format!("failed to register {slot:?} hotkey {hotkey}: {error}"));
+                    let error = chat_shortcut_error_after_attempt(None, &hotkey, Some(attempt));
+                    set_shortcut_error(&handle, slot, error);
                 }
+            }
+
+            if let Err(error) = apply_autostart(config.autostart) {
+                log(&error);
             }
 
             setup_tray(&handle)?;
@@ -2117,35 +2476,19 @@ pub fn run() {
                 let overlay_handle = overlay_hwnd(&handle);
                 let watcher = handle.clone();
                 win32::watch_foreground(move |info| {
-                    let is_overlay =
-                        info.is_own || win32::is_overlay_handle(info.hwnd, overlay_handle);
                     log(&format!(
                         "foreground exe={:?} hwnd={:#x} own={}",
-                        info.exe, info.hwnd, is_overlay
+                        info.exe, info.hwnd, info.is_own
                     ));
-                    dispatch(
-                        &watcher,
-                        Event::Foreground {
-                            exe: info.exe,
-                            hwnd: info.hwnd,
-                            is_overlay,
-                        },
-                    );
+                    let event =
+                        foreground_event(info.hwnd, info.exe, info.is_own, overlay_handle);
+                    dispatch(&watcher, event);
                 });
 
                 let info = win32::foreground_info();
-                let is_overlay = info.is_own || win32::is_overlay_handle(info.hwnd, overlay_handle);
+                let event = foreground_event(info.hwnd, info.exe, info.is_own, overlay_handle);
                 let handle = handle.clone();
-                std::thread::spawn(move || {
-                    dispatch(
-                        &handle,
-                        Event::Foreground {
-                            exe: info.exe,
-                            hwnd: info.hwnd,
-                            is_overlay,
-                        },
-                    );
-                });
+                std::thread::spawn(move || dispatch(&handle, event));
             }
 
             Ok(())

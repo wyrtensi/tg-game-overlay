@@ -298,7 +298,7 @@ function buildProfileCard(profile: Profile): HTMLElement {
   markupBtn.disabled = !zonesApply;
   markupBtn.title = t(zonesApply ? "Настроить зоны на игровом окне" : "Игра заблокирована — зоны не используются");
   markupBtn.addEventListener("click", () => {
-    void invokeVoid("toggle_markup", { on: true }).catch(reportBackendError);
+    void invokeVoid("toggle_markup", { on: true, exe: profile.exe }).catch(reportBackendError);
   });
   actions.appendChild(markupBtn);
 
