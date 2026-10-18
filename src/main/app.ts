@@ -19,7 +19,7 @@ import {
   msToSeconds,
   secondsToMs,
 } from "./format";
-import { formatKeyCombo, validateHotkeyCombo } from "./hotkey";
+import { formatKeyCombo, hotkeyFieldKeyAction, validateHotkeyCombo } from "./hotkey";
 import { normalizePhone, validatePhone } from "./phone";
 import { normalizeProfileExecutable } from "./profile-input";
 import { profileAddIntent, selectedProfileExecutable } from "./profile-add-intent";
@@ -494,8 +494,17 @@ function wireHotkeyField(field: HotkeyFieldConfig): void {
   const errorEl = byId<HTMLElement>(field.errorId);
 
   input.addEventListener("keydown", (event) => {
+    const action = hotkeyFieldKeyAction(event);
+    if (action === "navigate") return; // the browser moves focus on
     event.preventDefault();
     event.stopPropagation();
+    if (action === "cancel") {
+      input.value = field.getValue();
+      errorEl.textContent = "";
+      input.classList.remove("is-invalid");
+      return;
+    }
+    if (action === "ignore") return;
 
     const combo = formatKeyCombo(event);
     if (combo === null) return; // still only a modifier held down
@@ -606,6 +615,7 @@ function wireDirectionSettings(): void {
   for (const id of DIRECTION_INPUT_IDS) {
     const input = byId<HTMLInputElement>(id);
     input.addEventListener("keydown", (event) => {
+      if (hotkeyFieldKeyAction(event) === "navigate") return;
       event.preventDefault();
       event.stopPropagation();
       if (event.key === "Escape") {
@@ -733,12 +743,15 @@ function wirePhraseWheelSettings(): void {
   byId<HTMLInputElement>("phrase-wheel-enabled").addEventListener("change", savePhraseWheelSettings);
   byId<HTMLInputElement>("phrase-wheel-dead-zone").addEventListener("change", savePhraseWheelSettings);
   byId<HTMLInputElement>("phrase-wheel-hotkey").addEventListener("keydown", (event) => {
+    const action = hotkeyFieldKeyAction(event);
+    if (action === "navigate") return;
     event.preventDefault();
     event.stopPropagation();
-    if (event.key === "Escape") {
+    if (action === "cancel") {
       renderPhraseWheelSettings();
       return;
     }
+    if (action === "ignore") return;
     const combo = formatKeyCombo(event);
     if (combo === null) return;
     byId<HTMLInputElement>("phrase-wheel-hotkey").value = combo;

@@ -90,6 +90,24 @@ export function formatKeyCombo(input: KeyComboInput): string | null {
   return parts.join("+");
 }
 
+export type HotkeyFieldKeyAction = "navigate" | "cancel" | "ignore" | "record";
+
+/**
+ * What a hotkey capture field does with a keydown before it records a
+ * combination: Tab and Shift+Tab keep moving focus through the form, Esc
+ * cancels the capture, and a bare Backspace or Delete (an attempt to clear
+ * the field, which a hotkey cannot be) is ignored instead of becoming the
+ * new hotkey.
+ */
+export function hotkeyFieldKeyAction(input: KeyComboInput): HotkeyFieldKeyAction {
+  const main = input.code || input.key;
+  const commandModifier = input.ctrlKey || input.altKey || input.metaKey;
+  if (main === "Tab" && !commandModifier) return "navigate";
+  if (main === "Escape") return "cancel";
+  if ((main === "Backspace" || main === "Delete") && !commandModifier) return "ignore";
+  return "record";
+}
+
 /**
  * Returns a Russian error message when the combo is unusable, or undefined
  * when it is fine to send to the backend. The backend still has the final
