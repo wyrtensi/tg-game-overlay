@@ -22,6 +22,13 @@ import {
   type StickerIndex,
   type StoredMessage,
 } from "./connection";
+import {
+  capCodePoints,
+  isFreshSignal,
+  MAX_PHRASE_CHARS,
+  MAX_TEXT_CHARS,
+  sanitizeServerTime,
+} from "./envelope-limits";
 import { stickerDataUrl, stickerMimeType, type StickerStore } from "./sticker-store";
 import { MAX_TGS_BYTES } from "../core/media-limits";
 import type { SendKind, SendResult } from "../telegram/send-result";
@@ -247,17 +254,22 @@ export class RelayWorker {
     const envelope = await decryptEnvelope(keys, stored.data);
     if (!envelope || generation !== this.generation) return;
     if (this.markSeen(envelope.id)) return;
+    const isSignal = envelope.t === "direction" || envelope.t === "phrase";
     // Signals only make sense live: a backlog of arrows would flash all at once.
-    if (fromHistory && (envelope.t === "direction" || envelope.t === "phrase")) return;
-    if (envelope.t !== "direction" && envelope.t !== "phrase") {
+    if (fromHistory && isSignal) return;
+    // seenIds only dedupes within a session; ciphertext captured earlier and
+    // replayed later is caught by the sender's timestamp inside the encryption.
+    if (isSignal && !isFreshSignal(envelope.at, this.now())) return;
+    const at = sanitizeServerTime(stored.at, this.now());
+    if (!isSignal) {
       this.history.push(envelope);
-      this.historyAt.set(envelope.id, stored.at);
+      this.historyAt.set(envelope.id, at);
       if (this.history.length > HISTORY_REPLAY) {
         const dropped = this.history.shift();
         if (dropped) this.historyAt.delete(dropped.id);
       }
     }
-    await this.present(envelope, stored.at, generation);
+    await this.present(envelope, at, generation);
   }
 
   private async replayHistory(): Promise<void> {
@@ -265,7 +277,7 @@ export class RelayWorker {
     const generation = this.generation;
     for (const envelope of [...this.history]) {
       if (generation !== this.generation) return;
-      await this.present(envelope, this.historyAt.get(envelope.id) ?? envelope.at, generation);
+      await this.present(envelope, this.historyAt.get(envelope.id) ?? this.now(), generation);
     }
   }
 
@@ -275,14 +287,14 @@ export class RelayWorker {
     const base: OverlayMessage = { id: envelope.id, author, text: "", at, ...(outgoing ? { outgoing: true } : {}) };
     switch (envelope.t) {
       case "text":
-        await this.deps.invoke("push_message", { message: { ...base, text: envelope.text ?? "" } });
+        await this.deps.invoke("push_message", { message: { ...base, text: capCodePoints(envelope.text ?? "", MAX_TEXT_CHARS) } });
         return;
       case "image": {
         const image = envelope.image!;
         await this.deps.invoke("push_message", {
           message: {
             ...base,
-            text: envelope.text ?? "",
+            text: capCodePoints(envelope.text ?? "", MAX_TEXT_CHARS),
             media: {
               kind: image.mime === "image/gif" ? "gif" : "photo",
               mimeType: image.mime,
@@ -315,7 +327,7 @@ export class RelayWorker {
         return;
       case "phrase":
         await this.deps.invoke("tg_phrase", {
-          payload: { messageId: envelope.id, author, phrase: envelope.phrase ?? "", at: Date.now(), outgoing },
+          payload: { messageId: envelope.id, author, phrase: capCodePoints(envelope.phrase ?? "", MAX_PHRASE_CHARS), at: Date.now(), outgoing },
         });
         return;
     }
