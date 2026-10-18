@@ -111,8 +111,9 @@ export class Room {
 }
 
 export class RoomStore {
-  constructor({ dataDir, limits, timing }, logger) {
+  constructor({ dataDir, limits, timing, seqStart = () => Date.now() }, logger) {
     this.dir = path.join(dataDir, 'rooms');
+    this.seqStart = seqStart;
     this.limits = limits;
     this.timing = timing;
     this.logger = logger;
@@ -150,6 +151,10 @@ export class RoomStore {
 
   load(id) {
     const room = new Room(id, this);
+    // A room without a file (new, or forgotten after its messages expired)
+    // starts numbering at the clock, so a client that still remembers an old
+    // `since` never skips the first messages of the new life of the room.
+    room.seq = this.seqStart();
     const file = this.fileFor(id);
     let text;
     try {
@@ -177,7 +182,7 @@ export class RoomStore {
       }
       room.messages = [];
       room.bytes = 0;
-      room.seq = 0;
+      room.seq = this.seqStart();
     }
     return room;
   }

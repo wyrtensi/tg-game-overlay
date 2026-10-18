@@ -33,6 +33,8 @@ export async function startRelay({ dataDir = tmpDir(), env = {}, tweak } = {}) {
     ...env,
   });
   config.timing.persistDebounceMs = 20;
+  // Production numbers new rooms from the clock; tests count from 0 for readability.
+  config.seqStart = () => 0;
   tweak?.(config);
   const relay = createRelay(config, { logger: { info() {}, warn: console.error, error: console.error } });
   const { port } = await relay.start();

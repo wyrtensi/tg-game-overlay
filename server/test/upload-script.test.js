@@ -6,6 +6,10 @@ import path from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { promisify } from 'node:util';
 import { ADMIN_KEY, join, randomRoomId, startRelay, tmpDir } from './helpers.js';
+import zlib from 'node:zlib';
+
+// Real TGS files are gzip; the server checks that they inflate within limits.
+const STICKER_A = zlib.gzipSync(Buffer.from('{"v":"sticker-a"}'));
 
 const execFileAsync = promisify(execFile);
 const script = new URL('../scripts/upload-stickers.mjs', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
@@ -28,8 +32,8 @@ describe('upload-stickers script', () => {
     work = tmpDir('tgo-upload-');
     folder = path.join(work, 'stickers');
     fs.mkdirSync(folder);
-    fs.writeFileSync(path.join(folder, 'a.tgs'), 'sticker-a');
-    fs.writeFileSync(path.join(folder, 'a_copy.tgs'), 'sticker-a'); // duplicate bytes
+    fs.writeFileSync(path.join(folder, 'a.tgs'), STICKER_A);
+    fs.writeFileSync(path.join(folder, 'a_copy.tgs'), STICKER_A); // duplicate bytes
     fs.writeFileSync(path.join(folder, 'b.webp'), 'sticker-b');
     fs.writeFileSync(path.join(folder, 'c.WEBM'), 'sticker-c');
     fs.writeFileSync(path.join(folder, 'a_thumb.jpg'), 'thumb');
@@ -84,7 +88,7 @@ describe('upload-stickers script', () => {
     assert.equal(idx.packs[0].title, 'Test pack');
     const byId = new Map(idx.packs[0].stickers.map((s) => [s.id, s]));
     assert.equal(byId.size, 3);
-    assert.deepEqual(byId.get(sha(Buffer.from('sticker-a'))), { id: sha(Buffer.from('sticker-a')), kind: 'tgs', emoji: 'A', size: 9 });
+    assert.deepEqual(byId.get(sha(STICKER_A)), { id: sha(STICKER_A), kind: 'tgs', emoji: 'A', size: STICKER_A.length });
     assert.equal(byId.get(sha(Buffer.from('sticker-b'))).emoji, 'B');
     assert.equal(byId.get(sha(Buffer.from('sticker-c'))).kind, 'webm');
     assert.equal('emoji' in byId.get(sha(Buffer.from('sticker-c'))), false);

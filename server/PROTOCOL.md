@@ -112,7 +112,8 @@ Each room keeps the last 300 messages, at most 2 000 000 base64 characters in to
 and drops messages older than 7 days.
 Rooms are persisted to the data volume (debounced writes, plus on shutdown), so
 a restart keeps history. A room with no messages and no connections is
-forgotten.
+forgotten; when it comes back, its numbering restarts from the current time in
+milliseconds, so it never goes below a `since` a client still remembers.
 
 ### Stickers
 
@@ -143,7 +144,9 @@ C -> S  { "type": "sticker_delete", "id": "<sha256 hex>" }
 S -> C  { "type": "sticker_delete", "id": "<sha256 hex>", "deleted": true }
 ```
 
-Uploading the same bytes twice is a no-op (`created: false`). The pack id is a
+Uploading the same bytes twice is a no-op (`created: false`). A `tgs` sticker must be
+gzip of at most 64 KiB that inflates to at most 4 MiB, otherwise `too_large` or
+`bad_request`; clients enforce the same limits before rendering. The pack id is a
 slug of the pack title.
 
 ### Errors and limits
@@ -157,6 +160,7 @@ answering `sticker_get` carries the requested `id`; an
 error answering `stickers_index` carries `"request": "stickers_index"`.
 
 - Per connection: at most 30 `send` frames and 300 `sticker_get` frames per 10 seconds, then `rate_limited`.
+  `sticker_get` frames are answered one at a time, in order.
 - A stored message holds at most 1 500 000 base64 characters of `data` (`too_large`);
   a client should keep raw images under about 800 KB.
 - At most 16 connections per IP address and 512 in total, of which at most 64 may
@@ -187,6 +191,10 @@ error answering `stickers_index` carries `"request": "stickers_index"`.
   the network without TLS. Someone who knows the room name can test password
   guesses offline (each guess costs 600 000 PBKDF2 rounds), so use a long,
   random room password.
+- Without TLS, someone on the network path can capture ciphertext and replay
+  it later. Clients drop envelopes they have already seen in this session and
+  ignore live direction and phrase signals whose sender time is more than a few
+  minutes off, but a replayed old text message after a restart would show again.
 - The sticker catalog is not end-to-end encrypted or signed; it is protected
   only by the access key. Clients verify each file against its SHA-256 id and
   render animated stickers with a Lottie player that has no expression engine,

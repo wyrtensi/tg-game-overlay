@@ -113,6 +113,7 @@ export function createRelay(config, { logger = silentLogger } = {}) {
       roomId: null,
       sendTimes: [],
       stickerTimes: [],
+      stickerQueue: Promise.resolve(),
       preAuthBytes: 0,
       missed: 0,
       authTimer: null,
@@ -243,7 +244,10 @@ export function createRelay(config, { logger = silentLogger } = {}) {
           return sendError(ws, 'rate_limited', { id: typeof msg.id === 'string' ? msg.id.slice(0, 80) : null });
         }
         times.push(now);
-        return handleStickerGet(ws, msg);
+        // One file read at a time per connection: a burst of requests must not
+        // hold hundreds of sticker buffers in memory at once.
+        ctx.stickerQueue = ctx.stickerQueue.then(() => handleStickerGet(ws, msg)).catch(() => {});
+        return undefined;
       }
       case 'sticker_put':
       case 'sticker_delete':
@@ -289,8 +293,11 @@ export function createRelay(config, { logger = silentLogger } = {}) {
     if (typeof id !== 'string' || !SHA256_HEX_RE.test(id)) {
       return sendError(ws, 'bad_request', { id: typeof id === 'string' ? id.slice(0, 80) : null, message: 'id must be a sha256 hex string' });
     }
+    if (ws.readyState !== OPEN) return;
     const file = await stickers.read(id);
     if (!file) return sendError(ws, 'not_found', { id });
+    // Re-check after the read: the peer may not be draining what it already got.
+    if (ws.bufferedAmount > limits.maxBufferedBytes) return sendError(ws, 'rate_limited', { id });
     sendJson(ws, { type: 'sticker', id, kind: file.kind, b64: file.bytes.toString('base64') });
   }
 

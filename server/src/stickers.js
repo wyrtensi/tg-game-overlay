@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import zlib from 'node:zlib';
 import fs from 'node:fs';
 import path from 'node:path';
 import { writeFileAtomic } from './rooms.js';
@@ -41,6 +42,20 @@ export function packSlug(title) {
  * Content-addressed sticker files plus an index of packs, all under
  * DATA_DIR/stickers. The index is small and kept in memory.
  */
+/** Telegram caps animated stickers at 64 KiB; clients refuse bigger ones too. */
+export const MAX_TGS_BYTES = 64 * 1024;
+/** Lottie JSON inside a real sticker is far smaller; this stops gzip bombs. */
+export const MAX_TGS_INFLATED_BYTES = 4 * 1024 * 1024;
+
+function checkTgs(bytes) {
+  if (bytes.length > MAX_TGS_BYTES) throw new StickerError('too_large', 'tgs stickers are limited to 64 KiB');
+  try {
+    zlib.gunzipSync(bytes, { maxOutputLength: MAX_TGS_INFLATED_BYTES });
+  } catch {
+    throw new StickerError('bad_request', 'tgs must be gzip that inflates to at most 4 MiB');
+  }
+}
+
 export class StickerStore {
   constructor(dataDir, { maxStickerBytes }, logger) {
     this.dir = path.join(dataDir, 'stickers');
@@ -108,6 +123,7 @@ export class StickerStore {
     }
     if (bytes.length === 0) throw new StickerError('bad_request', 'empty sticker');
     if (bytes.length > this.maxStickerBytes) throw new StickerError('too_large', 'sticker exceeds the size limit');
+    if (kind === 'tgs') checkTgs(bytes);
 
     const id = crypto.createHash('sha256').update(bytes).digest('hex');
     if (this.byId.has(id)) return { id, created: false };

@@ -233,3 +233,33 @@ describe('persistence', () => {
     }
   });
 });
+
+describe('sequence numbers', () => {
+  test('a room forgotten on disk restarts above any seq a client remembers', async () => {
+    const dataDir = tmpDir();
+    const room = randomRoomId();
+    let srv = await startRelay({ dataDir, tweak: (c) => { c.seqStart = () => Date.now(); } });
+    let a;
+    try {
+      a = await join(srv.url, { room });
+      a.send({ type: 'send', cid: 'x', data: b64('first life') });
+      const first = await a.next('msg');
+      a.ws.close();
+      await srv.stop();
+      fs.rmSync(path.join(dataDir, 'rooms', `${room}.json`), { force: true });
+
+      srv = await startRelay({ dataDir, tweak: (c) => { c.seqStart = () => Date.now(); } });
+      const b = await join(srv.url, { room });
+      b.send({ type: 'send', cid: 'y', data: b64('second life') });
+      const second = await b.next('msg');
+      assert.ok(second.seq > first.seq, `${second.seq} should exceed ${first.seq}`);
+      // A client reconnecting with the old seq still receives the new message.
+      const late = await join(srv.url, { room, since: first.seq });
+      assert.deepEqual(late.ready.history.map((m) => m.seq), [second.seq]);
+      for (const c of [b, late]) c.ws.close();
+    } finally {
+      await srv.stop();
+      srv.cleanup();
+    }
+  });
+});

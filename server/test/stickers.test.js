@@ -4,7 +4,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { join, randomRoomId, startRelay } from './helpers.js';
+import zlib from 'node:zlib';
 import { packSlug } from '../src/stickers.js';
+
+const tgs = (text) => zlib.gzipSync(Buffer.from(JSON.stringify({ v: text })));
 
 const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
@@ -39,7 +42,7 @@ describe('stickers', () => {
   });
 
   test('put, duplicate put, index, get and delete', async () => {
-    const bytes = Buffer.from('fake tgs sticker bytes');
+    const bytes = tgs('fake tgs sticker');
     const id = sha(bytes);
     put('Cats', 'tgs', bytes, 'A');
     assert.deepEqual(await admin.next('sticker_put'), { type: 'sticker_put', id, created: true });
@@ -162,12 +165,31 @@ describe('stickers', () => {
     assert.deepEqual([missing.code, missing.id], ['not_found', 'b'.repeat(64)]);
   });
 
+  test('tgs stickers must be small gzip that does not inflate into a bomb', async () => {
+    put('Bad', 'tgs', Buffer.from('not gzip at all'));
+    assert.equal((await admin.next('error')).code, 'bad_request');
+    put('Bad', 'tgs', zlib.gzipSync(Buffer.alloc(8 * 1024 * 1024)));
+    assert.equal((await admin.next('error')).code, 'bad_request');
+    put('Bad', 'tgs', crypto.randomBytes(65 * 1024));
+    assert.equal((await admin.next('error')).code, 'too_large');
+  });
+
+  test('a burst of sticker_get frames is answered one by one, in order', async () => {
+    const bytes = Buffer.from('webp burst sticker');
+    put('Burst', 'webp', bytes);
+    const { id } = await admin.next('sticker_put');
+    for (let i = 0; i < 20; i += 1) client.send({ type: 'sticker_get', id });
+    for (let i = 0; i < 20; i += 1) assert.equal((await client.next('sticker')).id, id);
+    admin.send({ type: 'sticker_delete', id });
+    await admin.next('sticker_delete');
+  });
+
   test('Cyrillic and other non-ascii titles get a stable hash-based pack id', async () => {
-    put('Привет', 'tgs', Buffer.from('ru1'));
+    put('Привет', 'tgs', tgs('ru1'));
     const { id: a } = await admin.next('sticker_put');
-    put('Пока', 'tgs', Buffer.from('ru2'));
+    put('Пока', 'tgs', tgs('ru2'));
     const { id: b } = await admin.next('sticker_put');
-    put('Привет', 'tgs', Buffer.from('ru3'));
+    put('Привет', 'tgs', tgs('ru3'));
     const { id: c } = await admin.next('sticker_put');
     client.send({ type: 'stickers_index' });
     const idx = await client.next('stickers_index');
