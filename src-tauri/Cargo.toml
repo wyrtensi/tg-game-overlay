@@ -1,6 +1,6 @@
 [package]
 name = "tg-game-overlay"
-version = "0.2.0"
+version = "0.3.0"
 description = "Telegram chat overlay for games without an in-game chat"
 authors = ["wyrtensi"]
 edition = "2021"

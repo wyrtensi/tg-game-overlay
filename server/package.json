@@ -1,6 +1,6 @@
 {
   "name": "tg-game-overlay-server",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Self-hosted relay for tg-game-overlay: end-to-end encrypted rooms and a shared sticker catalog",
   "private": true,
   "license": "MIT",
