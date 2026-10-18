@@ -68,7 +68,7 @@ expressed as fractions of the window (see `src/core/zones.ts`).
 | `set_phrase_wheel_settings` | `{ settings: PhraseWheelSettings }` | `Config` |
 | `set_feed_settings` | `{ settings: FeedSettings }` | `Config` |
 | `set_language` | `{ language: "auto" \| "en" \| "ru" \| "zh" }` | `Config`; every page re-translates on `config:changed`, the tray menu is rebuilt |
-| `set_flags` | `{ autostart: boolean, demoFeed: boolean }` | `Config` |
+| `set_flags` | `{ autostart: boolean, demoFeed: boolean }` | `Config`; `autostart` writes or removes the `tg-game-overlay` value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` (also re-applied at every start) and throws a string when that fails |
 | `upsert_profile` | `{ profile: Profile }` | `Config` |
 | `remove_profile` | `{ exe: string }` | `Config` |
 | `add_current_app` | - | `Config` (legacy: adds the last foreground app as a profile) |

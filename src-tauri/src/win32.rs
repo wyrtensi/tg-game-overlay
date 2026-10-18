@@ -6,7 +6,12 @@ use windows::core::{w, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
     CloseHandle, BOOL, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM,
 };
+use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, WIN32_ERROR};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::Registry::{
+    RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
+    KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ,
+};
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -194,6 +199,95 @@ pub fn set_tool_window(handle: isize, on: bool) {
 
     if next != current {
         unsafe { SetWindowLongPtrW(hwnd, GWL_EXSTYLE, next) };
+    }
+}
+
+fn wide(text: &str) -> Vec<u16> {
+    text.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+fn win32_result(status: WIN32_ERROR) -> Result<(), String> {
+    status.ok().map_err(|error| error.to_string())
+}
+
+/// Writes (`Some(command)`) or removes (`None`) a value under
+/// HKCU\Software\Microsoft\Windows\CurrentVersion\Run, which Windows starts at sign-in.
+pub fn set_run_at_login(name: &str, command: Option<&str>) -> Result<(), String> {
+    set_user_string(r"Software\Microsoft\Windows\CurrentVersion\Run", name, command)
+}
+
+/// Writes or removes a REG_SZ value under HKEY_CURRENT_USER\{subkey}.
+fn set_user_string(subkey: &str, name: &str, value: Option<&str>) -> Result<(), String> {
+    let mut key = HKEY::default();
+    let subkey = wide(subkey);
+    win32_result(unsafe {
+        RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(subkey.as_ptr()),
+            0,
+            PCWSTR::null(),
+            REG_OPTION_NON_VOLATILE,
+            KEY_SET_VALUE,
+            None,
+            &mut key,
+            None,
+        )
+    })?;
+
+    let name = wide(name);
+    let status = match value {
+        Some(value) => {
+            // REG_SZ data is UTF-16 including the terminating null, passed as bytes.
+            let bytes: Vec<u8> = wide(value)
+                .iter()
+                .flat_map(|unit| unit.to_le_bytes())
+                .collect();
+            unsafe { RegSetValueExW(key, PCWSTR(name.as_ptr()), 0, REG_SZ, Some(&bytes)) }
+        }
+        None => match unsafe { RegDeleteValueW(key, PCWSTR(name.as_ptr())) } {
+            ERROR_FILE_NOT_FOUND => ERROR_SUCCESS,
+            status => status,
+        },
+    };
+    unsafe {
+        let _ = RegCloseKey(key);
+    }
+    win32_result(status)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::set_user_string;
+
+    fn query(subkey: &str, name: &str) -> Option<String> {
+        let output = std::process::Command::new("reg")
+            .args(["query", &format!(r"HKCU\{subkey}"), "/v", name])
+            .output()
+            .ok()?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    #[test]
+    fn writes_and_removes_a_user_string_value() {
+        let subkey = format!(r"Software\tg-game-overlay-test-{}", std::process::id());
+        let command = r#""C:\Games\tg-game-overlay.exe""#;
+
+        set_user_string(&subkey, "autostart", Some(command)).unwrap();
+        let listed = query(&subkey, "autostart").unwrap();
+        assert!(listed.contains("REG_SZ"), "{listed}");
+        assert!(listed.contains(command), "{listed}");
+
+        set_user_string(&subkey, "autostart", None).unwrap();
+        assert!(query(&subkey, "autostart").is_none());
+        // Removing a value that is already gone is not an error.
+        set_user_string(&subkey, "autostart", None).unwrap();
+
+        let _ = std::process::Command::new("reg")
+            .args(["delete", &format!(r"HKCU\{subkey}"), "/f"])
+            .output();
     }
 }
 

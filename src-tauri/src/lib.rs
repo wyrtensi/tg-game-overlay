@@ -646,12 +646,43 @@ fn set_language(app: AppHandle, language: String) -> Result<Config, String> {
     Ok(config)
 }
 
+/// Name of the HKCU Run value, after the product.
+const AUTOSTART_VALUE: &str = "tg-game-overlay";
+
+/// Points the Run value at the running executable, so a moved install heals
+/// itself on the next start, or removes the value.
+fn apply_autostart(enabled: bool) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let command = if enabled {
+            let exe = std::env::current_exe()
+                .map_err(|error| format!("Не удалось настроить автозапуск: {error}"))?;
+            Some(format!("\"{}\"", exe.display()))
+        } else {
+            None
+        };
+        win32::set_run_at_login(AUTOSTART_VALUE, command.as_deref())
+            .map_err(|error| format!("Не удалось настроить автозапуск: {error}"))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = enabled;
+        Ok(())
+    }
+}
+
 #[tauri::command]
 fn set_flags(app: AppHandle, autostart: bool, demo_feed: bool) -> Result<Config, String> {
     let mut config = get_config(app.clone());
+    let previous_autostart = config.autostart;
+    apply_autostart(autostart)?;
     config.autostart = autostart;
     config.demo_feed = demo_feed;
-    save_config(&app, config)
+    save_config(&app, config).inspect_err(|_| {
+        if let Err(error) = apply_autostart(previous_autostart) {
+            log(&format!("failed to roll back autostart: {error}"));
+        }
+    })
 }
 
 #[tauri::command]
@@ -2310,6 +2341,10 @@ pub fn run() {
                     let error = chat_shortcut_error_after_attempt(None, &hotkey, Some(attempt));
                     set_shortcut_error(&handle, slot, error);
                 }
+            }
+
+            if let Err(error) = apply_autostart(config.autostart) {
+                log(&error);
             }
 
             setup_tray(&handle)?;

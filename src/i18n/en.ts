@@ -387,6 +387,7 @@ export const en: Record<string, string> = {
   "Поддерживается только Windows": "Only Windows is supported",
   "Сначала откройте игру": "Open the game first",
   "Сначала откройте {title}": "Open {title} first",
+  "Не удалось настроить автозапуск: {error}": "Could not set up autostart: {error}",
   "Свой сервер не подключён": "The own server is not connected",
   "Слишком длинный адрес сервера или название комнаты": "The server address or room name is too long",
   "Имя длиннее 64 символов": "The name is longer than 64 characters",
