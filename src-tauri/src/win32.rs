@@ -22,8 +22,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, RegisterClassW, SetForegroundWindow,
     SetWindowLongPtrW, TranslateMessage, EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND,
     GA_ROOTOWNER, GWL_EXSTYLE, HWND_MESSAGE, MSG, WINDOW_EX_STYLE, WINDOW_STYLE,
-    WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_INPUT, WNDCLASSW, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW,
+    WINEVENT_OUTOFCONTEXT, WM_INPUT, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -207,21 +206,6 @@ pub fn focus_window(handle: isize) {
     }
 }
 
-pub fn is_overlay_handle(root_owner: isize, overlay_handle: Option<isize>) -> bool {
-    Some(root_owner) == overlay_handle
-}
-
-#[cfg(test)]
-mod tests {
-    use super::is_overlay_handle;
-
-    #[test]
-    fn recognizes_the_overlay_root_owner() {
-        assert!(is_overlay_handle(0x42, Some(0x42)));
-        assert!(!is_overlay_handle(0x43, Some(0x42)));
-    }
-}
-
 unsafe extern "system" fn win_event_proc(
     _hook: HWINEVENTHOOK,
     _event: u32,
@@ -242,7 +226,9 @@ unsafe extern "system" fn win_event_proc(
 }
 
 /// Starts a thread that reports every foreground change. The hook needs a message
-/// pump on its own thread, otherwise the callback is never invoked.
+/// pump on its own thread, otherwise the callback is never invoked. Windows of
+/// this process are reported too: focus moving from the game straight to the
+/// settings window has to hide the overlay like any other application would.
 pub fn watch_foreground<F>(callback: F)
 where
     F: Fn(ForegroundInfo) + Send + Sync + 'static,
@@ -259,7 +245,7 @@ where
             Some(win_event_proc),
             0,
             0,
-            WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
+            WINEVENT_OUTOFCONTEXT,
         );
         if hook.is_invalid() {
             return;

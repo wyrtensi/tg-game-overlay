@@ -296,6 +296,22 @@ fn schedule_single_key_chat_shortcut_sync(app: &AppHandle) {
     std::thread::spawn(move || sync_single_key_chat_shortcut(&app));
 }
 
+/// Only the overlay itself keeps the current state. Every other window of the
+/// app (settings, dialogs, the tray menu) is not the game: it hides the overlay
+/// like a foreign application and can never match a profile, whatever the exe.
+fn foreground_event(
+    hwnd: isize,
+    exe: Option<String>,
+    is_own: bool,
+    overlay_hwnd: Option<isize>,
+) -> Event {
+    Event::Foreground {
+        exe: if is_own { None } else { exe },
+        hwnd,
+        is_overlay: overlay_hwnd == Some(hwnd),
+    }
+}
+
 fn overlay_window(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window(OVERLAY)
 }
@@ -773,6 +789,7 @@ fn observe_direction_keys(app: AppHandle) {
             let kind = app_state.state.lock().unwrap().kind;
             let markup = *app_state.markup.lock().unwrap();
             let paused = *app_state.paused.lock().unwrap();
+            let game_foreground = *app_state.game_foreground.lock().unwrap();
             let keys = [
                 settings.up_key.as_str(),
                 settings.down_key.as_str(),
@@ -794,7 +811,9 @@ fn observe_direction_keys(app: AppHandle) {
             }
             escape_was_down = escape_is_down;
 
-            if settings.enabled && input::DirectionInputGate::enabled(kind, markup, paused) {
+            if settings.enabled
+                && input::DirectionInputGate::enabled(kind, markup, paused, game_foreground)
+            {
                 for direction in edges {
                     publish_direction(&app, direction);
                 }
@@ -1119,6 +1138,37 @@ fn phrase_wheel_shortcut_steps(
         (true, false, _) => &["unregister:old"],
         (true, true, false) => &["register:new", "unregister:old"],
         _ => &[],
+    }
+}
+
+#[cfg(test)]
+mod foreground_tests {
+    use super::foreground_event;
+    use crate::states::Event;
+
+    fn unpack(event: Event) -> (Option<String>, bool) {
+        match event {
+            Event::Foreground { exe, is_overlay, .. } => (exe, is_overlay),
+            other => panic!("unexpected event {other:?}"),
+        }
+    }
+
+    #[test]
+    fn recognizes_the_overlay_root_owner() {
+        let event = foreground_event(0x42, Some("tg-game-overlay.exe".into()), true, Some(0x42));
+        assert!(unpack(event).1);
+    }
+
+    #[test]
+    fn treats_the_settings_window_as_a_foreign_application() {
+        let event = foreground_event(0x43, Some("tg-game-overlay.exe".into()), true, Some(0x42));
+        assert_eq!(unpack(event), (None, false));
+    }
+
+    #[test]
+    fn keeps_the_exe_of_other_applications() {
+        let event = foreground_event(0x44, Some("dota2.exe".into()), false, Some(0x42));
+        assert_eq!(unpack(event), (Some("dota2.exe".into()), false));
     }
 }
 
@@ -1891,17 +1941,9 @@ fn set_paused(app: &AppHandle, paused: bool) {
     #[cfg(windows)]
     {
         let info = win32::foreground_info();
+        let event = foreground_event(info.hwnd, info.exe, info.is_own, overlay_hwnd(app));
         let app = app.clone();
-        std::thread::spawn(move || {
-            dispatch(
-                &app,
-                Event::Foreground {
-                    exe: info.exe,
-                    hwnd: info.hwnd,
-                    is_overlay: info.is_own,
-                },
-            );
-        });
+        std::thread::spawn(move || dispatch(&app, event));
     }
 }
 
@@ -2209,35 +2251,19 @@ pub fn run() {
                 let overlay_handle = overlay_hwnd(&handle);
                 let watcher = handle.clone();
                 win32::watch_foreground(move |info| {
-                    let is_overlay =
-                        info.is_own || win32::is_overlay_handle(info.hwnd, overlay_handle);
                     log(&format!(
                         "foreground exe={:?} hwnd={:#x} own={}",
-                        info.exe, info.hwnd, is_overlay
+                        info.exe, info.hwnd, info.is_own
                     ));
-                    dispatch(
-                        &watcher,
-                        Event::Foreground {
-                            exe: info.exe,
-                            hwnd: info.hwnd,
-                            is_overlay,
-                        },
-                    );
+                    let event =
+                        foreground_event(info.hwnd, info.exe, info.is_own, overlay_handle);
+                    dispatch(&watcher, event);
                 });
 
                 let info = win32::foreground_info();
-                let is_overlay = info.is_own || win32::is_overlay_handle(info.hwnd, overlay_handle);
+                let event = foreground_event(info.hwnd, info.exe, info.is_own, overlay_handle);
                 let handle = handle.clone();
-                std::thread::spawn(move || {
-                    dispatch(
-                        &handle,
-                        Event::Foreground {
-                            exe: info.exe,
-                            hwnd: info.hwnd,
-                            is_overlay,
-                        },
-                    );
-                });
+                std::thread::spawn(move || dispatch(&handle, event));
             }
 
             Ok(())
