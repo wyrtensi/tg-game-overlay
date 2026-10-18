@@ -57,7 +57,8 @@ pub struct AppState {
     state: Mutex<State>,
     game_foreground: Mutex<bool>,
     single_key_open_pending: AtomicBool,
-    chat_shortcut_error: Mutex<Option<String>>,
+    /// Hotkeys that could not be registered, published as one warning line.
+    shortcut_errors: Mutex<ShortcutErrors>,
     config_path: PathBuf,
     runtime_cache: Mutex<RuntimeCacheV1>,
     runtime_cache_path: PathBuf,
@@ -195,15 +196,54 @@ fn chat_shortcut_error_after_attempt(
     }
 }
 
-fn set_chat_shortcut_error(app: &AppHandle, error: Option<String>) {
-    let app_state = app.state::<AppState>();
-    let mut current = app_state.chat_shortcut_error.lock().unwrap();
-    if *current == error {
-        return;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShortcutSlot {
+    Chat,
+    Markup,
+    PhraseWheel,
+}
+
+/// One registration error per hotkey, so that a success for one of them never
+/// clears a failure reported for another.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ShortcutErrors {
+    chat: Option<String>,
+    markup: Option<String>,
+    phrase_wheel: Option<String>,
+}
+
+impl ShortcutErrors {
+    fn slot_mut(&mut self, slot: ShortcutSlot) -> &mut Option<String> {
+        match slot {
+            ShortcutSlot::Chat => &mut self.chat,
+            ShortcutSlot::Markup => &mut self.markup,
+            ShortcutSlot::PhraseWheel => &mut self.phrase_wheel,
+        }
     }
-    *current = error.clone();
-    drop(current);
-    let _ = app.emit("overlay:chat_shortcut_error", error);
+
+    /// The pages show a single line; the chat key matters most.
+    fn published(&self) -> Option<String> {
+        self.chat
+            .clone()
+            .or_else(|| self.markup.clone())
+            .or_else(|| self.phrase_wheel.clone())
+    }
+}
+
+fn published_shortcut_error(app: &AppHandle) -> Option<String> {
+    app.state::<AppState>().shortcut_errors.lock().unwrap().published()
+}
+
+fn set_shortcut_error(app: &AppHandle, slot: ShortcutSlot, error: Option<String>) {
+    let app_state = app.state::<AppState>();
+    let mut errors = app_state.shortcut_errors.lock().unwrap();
+    let before = errors.published();
+    *errors.slot_mut(slot) = error;
+    let after = errors.published();
+    drop(errors);
+    if before != after {
+        let _ = app.emit("overlay:chat_shortcut_error", after);
+    }
 }
 
 fn sync_single_key_chat_shortcut(app: &AppHandle) {
@@ -235,15 +275,15 @@ fn sync_single_key_chat_shortcut(app: &AppHandle) {
         if let Err(error) = &attempt {
             log(&format!("failed to register chat key {hotkey}: {error}"));
         }
-        let previous = app_state.chat_shortcut_error.lock().unwrap().clone();
+        let previous = app_state.shortcut_errors.lock().unwrap().chat.clone();
         let error = chat_shortcut_error_after_attempt(previous.as_deref(), hotkey, Some(attempt));
-        set_chat_shortcut_error(app, error);
+        set_shortcut_error(app, ShortcutSlot::Chat, error);
     } else if manager.is_registered(shortcut.clone()) {
         match manager.unregister(shortcut) {
-            Ok(()) => set_chat_shortcut_error(app, None),
+            Ok(()) => set_shortcut_error(app, ShortcutSlot::Chat, None),
             Err(error) => {
                 log(&format!("failed to unregister chat key {hotkey}: {error}"));
-                set_chat_shortcut_error(app, Some(format!(
+                set_shortcut_error(app, ShortcutSlot::Chat, Some(format!(
                     "Не удалось освободить клавишу {hotkey}: {error}. Перезапустите приложение."
                 )));
             }
@@ -473,8 +513,7 @@ fn sync_overlay(app: AppHandle) {
         },
     );
     push_zones(&app, &config);
-    let shortcut_error = app.state::<AppState>().chat_shortcut_error.lock().unwrap().clone();
-    let _ = app.emit("overlay:chat_shortcut_error", shortcut_error);
+    let _ = app.emit("overlay:chat_shortcut_error", published_shortcut_error(&app));
     request_telegram_history(&app);
 }
 
@@ -497,7 +536,7 @@ fn get_config(app: AppHandle) -> Config {
 
 #[tauri::command]
 fn get_chat_shortcut_error(app: AppHandle) -> Option<String> {
-    app.state::<AppState>().chat_shortcut_error.lock().unwrap().clone()
+    published_shortcut_error(&app)
 }
 
 #[derive(serde::Deserialize)]
@@ -666,9 +705,12 @@ fn set_hotkey(app: AppHandle, hotkey: String, markup: Option<bool>) -> Result<Co
     }
 
     let config = save_config(&app, config)?;
-    if !is_markup_shortcut {
-        set_chat_shortcut_error(&app, None);
-    }
+    let slot = if is_markup_shortcut {
+        ShortcutSlot::Markup
+    } else {
+        ShortcutSlot::Chat
+    };
+    set_shortcut_error(&app, slot, None);
     schedule_single_key_chat_shortcut_sync(&app);
     Ok(config)
 }
@@ -949,8 +991,17 @@ fn set_phrase_wheel_settings(
             _ => {}
         }
     }
+    // The same hotkey kept after it failed to register at startup is retried
+    // here instead of being reported as fine.
+    if settings.enabled && !app.global_shortcut().is_registered(shortcut.clone()) {
+        app.global_shortcut()
+            .register(shortcut)
+            .map_err(|error| format!("Сочетание занято другой программой: {error}"))?;
+    }
     config.phrase_wheel = settings;
-    save_config(&app, config)
+    let config = save_config(&app, config)?;
+    set_shortcut_error(&app, ShortcutSlot::PhraseWheel, None);
+    Ok(config)
 }
 
 #[tauri::command]
@@ -1073,7 +1124,7 @@ fn phrase_wheel_shortcut_steps(
 
 #[cfg(test)]
 mod shortcut_tests {
-    use super::{chat_shortcut_error_after_attempt, normalize_phrase_wheel_settings, parse_hotkey, phrase_wheel_shortcut_steps, replacement_steps};
+    use super::{chat_shortcut_error_after_attempt, normalize_phrase_wheel_settings, parse_hotkey, phrase_wheel_shortcut_steps, replacement_steps, ShortcutErrors, ShortcutSlot};
     use crate::config::PhraseWheelSettings;
 
     #[test]
@@ -1109,6 +1160,21 @@ mod shortcut_tests {
             None
         );
         assert_eq!(chat_shortcut_error_after_attempt(Some(&error), "T", None), Some(error));
+    }
+
+    #[test]
+    fn a_chat_key_success_keeps_a_markup_failure_visible() {
+        let mut errors = ShortcutErrors::default();
+        *errors.slot_mut(ShortcutSlot::Markup) = Some("markup".into());
+        *errors.slot_mut(ShortcutSlot::Chat) = Some("chat".into());
+        assert_eq!(errors.published().as_deref(), Some("chat"));
+
+        *errors.slot_mut(ShortcutSlot::Chat) = None;
+        assert_eq!(errors.published().as_deref(), Some("markup"));
+
+        *errors.slot_mut(ShortcutSlot::Markup) = None;
+        *errors.slot_mut(ShortcutSlot::PhraseWheel) = Some("wheel".into());
+        assert_eq!(errors.published().as_deref(), Some("wheel"));
     }
 
     #[test]
@@ -2069,7 +2135,7 @@ pub fn run() {
                 state: Mutex::new(State::default()),
                 game_foreground: Mutex::new(false),
                 single_key_open_pending: AtomicBool::new(false),
-                chat_shortcut_error: Mutex::new(None),
+                shortcut_errors: Mutex::new(ShortcutErrors::default()),
                 config_path,
                 runtime_cache: Mutex::new(runtime_cache),
                 runtime_cache_path,
@@ -2082,16 +2148,25 @@ pub fn run() {
                 phrase_wheel: Mutex::new(phrase_wheel::WheelLifecycle::default()),
             });
 
-            let mut hotkeys = vec![config.markup_hotkey.clone()];
+            // A single-key chat hotkey is registered only while a game is in
+            // front; sync_single_key_chat_shortcut reports its own failures.
+            let mut hotkeys = vec![(ShortcutSlot::Markup, config.markup_hotkey.clone())];
             if !is_single_key_shortcut(&config.hotkey) {
-                hotkeys.push(config.hotkey.clone());
+                hotkeys.push((ShortcutSlot::Chat, config.hotkey.clone()));
             }
             if config.phrase_wheel.enabled {
-                hotkeys.push(config.phrase_wheel.hotkey.clone());
+                hotkeys.push((ShortcutSlot::PhraseWheel, config.phrase_wheel.hotkey.clone()));
             }
-            for hotkey in hotkeys {
-                if let Ok(shortcut) = parse_hotkey(&hotkey) {
-                    let _ = app.global_shortcut().register(shortcut);
+            for (slot, hotkey) in hotkeys {
+                let attempt = parse_hotkey(&hotkey).and_then(|shortcut| {
+                    app.global_shortcut()
+                        .register(shortcut)
+                        .map_err(|error| error.to_string())
+                });
+                if let Err(error) = &attempt {
+                    log(&format!("failed to register {slot:?} hotkey {hotkey}: {error}"));
+                    let error = chat_shortcut_error_after_attempt(None, &hotkey, Some(attempt));
+                    set_shortcut_error(&handle, slot, error);
                 }
             }
 
