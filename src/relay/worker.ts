@@ -468,6 +468,11 @@ export class RelayWorker {
     await this.deps.invoke("tg_stickers", { payload: { packs, phase, ...(error ? { error } : {}) } });
   }
 
+  /** Only the previews loaded since the last update; the overlay merges them into the packs it holds. */
+  private async publishPreviews(previews: { fileId: string; dataUrl: string }[], phase: "previews" | "complete"): Promise<void> {
+    await this.deps.invoke("tg_stickers", { payload: { previews, phase } });
+  }
+
   private async onStickersRequest(refresh: boolean): Promise<void> {
     const session = this.session;
     if (!session?.connection.connected) {
@@ -486,43 +491,38 @@ export class RelayWorker {
     if (generation !== this.generation) return;
     this.stickerIndex = index;
 
-    let packs: StickerPack[] = index.packs.map((pack) => ({
-      id: pack.id,
-      title: pack.title,
-      stickers: pack.stickers.map((sticker) => {
-        this.stickerKinds.set(sticker.id, sticker.kind);
-        return { fileId: sticker.id, emoji: sticker.emoji, kind: sticker.kind, documentReady: true };
-      }),
-    }));
-
     const all = index.packs.flatMap((pack) => pack.stickers);
     const previews = new Map<string, string>();
     for (const sticker of all) {
       const b64 = await this.loadSticker(sticker.id, sticker.kind, false);
       if (b64) previews.set(sticker.id, stickerDataUrl({ kind: sticker.kind, b64 }));
     }
-    const withPreviews = () => packs.map((pack) => ({
-      ...pack,
+    const packs: StickerPack[] = index.packs.map((pack) => ({
+      id: pack.id,
+      title: pack.title,
       stickers: pack.stickers.map((sticker) => {
-        const dataUrl = previews.get(sticker.fileId);
-        return dataUrl ? { ...sticker, dataUrl } : sticker;
+        this.stickerKinds.set(sticker.id, sticker.kind);
+        const dataUrl = previews.get(sticker.id);
+        return { fileId: sticker.id, emoji: sticker.emoji, kind: sticker.kind, documentReady: true, ...(dataUrl ? { dataUrl } : {}) };
       }),
     }));
-    packs = withPreviews();
+    if (generation !== this.generation) return;
     await this.publishStickers(packs, "metadata");
 
+    // A preview can be up to a megabyte: each one crosses IPC once, in the
+    // batch it was downloaded in, never again with the whole index.
     const missing = all.filter((sticker) => !previews.has(sticker.id));
     for (let offset = 0; offset < missing.length; offset += STICKER_FETCH_CONCURRENCY * 4) {
       const batch = missing.slice(offset, offset + STICKER_FETCH_CONCURRENCY * 4);
+      const loaded: { fileId: string; dataUrl: string }[] = [];
       await runLimited(batch, STICKER_FETCH_CONCURRENCY, async (sticker) => {
         const b64 = await this.loadSticker(sticker.id, sticker.kind, true);
-        if (b64) previews.set(sticker.id, stickerDataUrl({ kind: sticker.kind, b64 }));
+        if (b64) loaded.push({ fileId: sticker.id, dataUrl: stickerDataUrl({ kind: sticker.kind, b64 }) });
       });
       if (generation !== this.generation) return;
-      packs = withPreviews();
-      await this.publishStickers(packs, "previews");
+      if (loaded.length > 0) await this.publishPreviews(loaded, "previews");
     }
-    await this.publishStickers(withPreviews(), "complete");
+    await this.publishPreviews([], "complete");
   }
 }
 

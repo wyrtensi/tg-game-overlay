@@ -60,6 +60,54 @@ export function filterStickers(packs: StickerPack[], query: string): StickerPack
   });
 }
 
+export interface StickerPreview {
+  fileId: string;
+  dataUrl: string;
+}
+
+/** A tg:stickers payload (CONTRACT.md). */
+export interface StickerUpdate {
+  packs?: StickerPack[];
+  previews?: StickerPreview[];
+}
+
+/**
+ * The packs after a tg:stickers payload: `packs` replaces them, `previews`
+ * alone fills in preview data URLs of the packs already held (the relay
+ * worker streams each preview once that way instead of the whole index).
+ */
+export function applyStickerUpdate(current: StickerPack[], update: StickerUpdate): StickerPack[] {
+  if (update.packs) return update.packs;
+  if (!update.previews || update.previews.length === 0) return current;
+  const previews = new Map(update.previews.map((preview) => [preview.fileId, preview.dataUrl]));
+  return current.map((pack) => ({
+    ...pack,
+    stickers: pack.stickers.map((sticker) => {
+      const dataUrl = previews.get(sticker.fileId);
+      return dataUrl === undefined ? sticker : { ...sticker, dataUrl };
+    }),
+  }));
+}
+
+/**
+ * How the picker grid follows a new sticker list: rebuilt when the stickers
+ * or their order differ (another pack or search), otherwise only the
+ * stickers whose preview changed are replaced in place, so the rest keep
+ * playing and the panel keeps its scroll position.
+ */
+export function planStickerGrid(
+  current: readonly { fileId: string; dataUrl?: string }[],
+  next: readonly { fileId: string; dataUrl?: string }[],
+): { rebuild: true } | { rebuild: false; changed: string[] } {
+  if (current.length !== next.length || current.some((sticker, index) => sticker.fileId !== next[index].fileId)) {
+    return { rebuild: true };
+  }
+  return {
+    rebuild: false,
+    changed: next.filter((sticker, index) => sticker.dataUrl !== current[index].dataUrl).map((sticker) => sticker.fileId),
+  };
+}
+
 function uniqueStickers(stickers: StickerRef[]): StickerRef[] {
   const seen = new Set<string>();
   return stickers.filter((sticker) => {

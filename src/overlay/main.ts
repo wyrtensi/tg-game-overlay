@@ -19,7 +19,16 @@ import { mediaFailureLabel } from "./media-state";
 import { MediaStore } from "./media-store";
 import { playbackDeadline, remainingPlaybackMs } from "./sticker-playback";
 import { isNearBottom } from "./scroll";
-import { filterStickers, pushRecent, type StickerPack, withRecentPack } from "./stickers";
+import {
+  applyStickerUpdate,
+  filterStickers,
+  planStickerGrid,
+  pushRecent,
+  type StickerPack,
+  type StickerRef,
+  type StickerUpdate,
+  withRecentPack,
+} from "./stickers";
 import { messageClassNames, messageContent, messageTime, messageTimestamp } from "./message-presentation";
 import { messageChanged } from "./message-update";
 import { pickerEmptyMessage, pickerProgressMessage, type StickerPickerState } from "./sticker-picker-state";
@@ -182,6 +191,14 @@ interface MarkupPayload {
   active: boolean;
 }
 
+/** One button of the sticker picker grid, kept so a preview update can patch it in place. */
+interface StickerGridItem {
+  fileId: string;
+  dataUrl?: string;
+  button: HTMLButtonElement;
+  lottie: AnimationItem | null;
+}
+
 /** Any element ever pushed through the feed, kept so settings changes can rebuild it. */
 interface LogEntry {
   message: ChatMessage;
@@ -280,7 +297,7 @@ class OverlayApp {
   // "same id, media now attached" update can patch the existing node.
   private readonly mediaById = new MediaStore<MediaPayload>(MEDIA_MEMORY_LIMIT_BYTES);
   private readonly lottieByMessageId = new Map<string, AnimationItem>();
-  private readonly pickerLotties = new Set<AnimationItem>();
+
   private readonly videosByMessageId = new Map<string, HTMLVideoElement>();
   private readonly stickerDeadlines = new Map<string, number | null>();
   private readonly stickerPauseTimers = new Map<string, ReturnType<typeof window.setTimeout>>();
@@ -305,7 +322,16 @@ class OverlayApp {
   private recentStickerIds: string[] = loadRecentStickers();
   private selectedStickerPackId: string | null = null;
   private stickerSearchQuery = "";
-  private stickerPickerRenderVersion = 0;
+  // The picker's chrome lives as long as the page (see renderStickerPanel).
+  private readonly stickerSearchEl = document.createElement("input");
+  private readonly stickerTabsEl = document.createElement("div");
+  private readonly stickerToolsEl = document.createElement("div");
+  private readonly stickerProgressEl = document.createElement("span");
+  private readonly stickerRefreshEl = document.createElement("button");
+  private readonly stickerGridEl = document.createElement("div");
+  private readonly stickerNoResultsEl = document.createElement("div");
+  private readonly stickerGridItems: StickerGridItem[] = [];
+  private stickerTabsKey = "";
 
   start(): void {
     this.wireInput();
@@ -461,11 +487,14 @@ class OverlayApp {
       this.render();
     });
 
-    await this.safeListen<{ packs: StickerPack[]; phase?: "metadata" | "previews" | "complete"; error?: string }>("tg:stickers", (payload) => {
-      this.stickerPacks = payload.packs;
+    await this.safeListen<StickerUpdate & { phase?: "metadata" | "previews" | "complete"; error?: string }>("tg:stickers", (payload) => {
+      // Streamed previews belong to packs this page holds; after a reset
+      // there is nothing to merge them into until the picker asks again.
+      if (!payload.packs && !payload.error && !this.stickerPacksRequested) return;
+      this.stickerPacks = applyStickerUpdate(this.stickerPacks, payload);
       this.stickerPickerState = payload.error
         ? { status: "error", message: payload.error }
-        : { status: "ready", packs: payload.packs, phase: payload.phase };
+        : { status: "ready", packs: this.stickerPacks, phase: payload.phase };
       this.renderStickerPanel();
     });
 
@@ -818,50 +847,51 @@ class OverlayApp {
       // for the next render tick.
       this.render();
     });
+
+    this.stickerSearchEl.type = "search";
+    this.stickerSearchEl.className = "sticker-search";
+    this.stickerSearchEl.addEventListener("input", () => {
+      this.stickerSearchQuery = this.stickerSearchEl.value;
+      this.renderStickerPanel();
+    });
+    this.stickerTabsEl.className = "sticker-tabs";
+    this.stickerTabsEl.setAttribute("role", "tablist");
+    this.stickerToolsEl.className = "sticker-panel__tools";
+    this.stickerProgressEl.className = "sticker-panel__progress";
+    this.stickerRefreshEl.type = "button";
+    this.stickerRefreshEl.className = "sticker-panel__refresh";
+    this.stickerRefreshEl.addEventListener("click", () => {
+      this.stickerPacksRequested = true;
+      this.safeInvoke("tg_request_stickers", { refresh: true });
+    });
+    this.stickerToolsEl.append(this.stickerProgressEl, this.stickerRefreshEl);
+    this.stickerGridEl.className = "sticker-grid";
+    this.stickerNoResultsEl.className = "sticker-panel__empty";
   }
 
-  /** Rebuilds the picker's contents; visibility itself is driven every tick by renderInputZone. */
-  private renderStickerPanel(focusSearch = false): void {
+  /**
+   * Updates the picker in place; visibility itself is driven every tick by
+   * renderInputZone. tg:stickers batches arrive while the user searches, so
+   * the search field, tabs and tools persist (focus, caret and the panel's
+   * scroll position survive) and the grid only swaps stickers whose preview
+   * changed.
+   */
+  private renderStickerPanel(): void {
     if (!this.stickerPanelOpen) {
-      this.destroyPickerLotties();
+      this.clearStickerGrid();
       return;
     }
-
-    this.stickerPickerRenderVersion += 1;
-    this.destroyPickerLotties();
-    const renderVersion = this.stickerPickerRenderVersion;
-
-    const packs = withRecentPack(this.stickerPacks, this.recentStickerIds);
-    this.stickerPanelEl.replaceChildren();
 
     const emptyMessage = pickerEmptyMessage(this.stickerPickerState);
     if (emptyMessage) {
-      const empty = document.createElement("div");
-      empty.className = "sticker-panel__empty";
-      empty.textContent = emptyMessage;
-      this.stickerPanelEl.appendChild(empty);
-      if (this.stickerPickerState.status === "error") {
-        const retry = document.createElement("button");
-        retry.type = "button";
-        retry.className = "sticker-panel__retry";
-        retry.textContent = t("Повторить");
-        retry.addEventListener("click", () => {
-          this.stickerPacksRequested = true;
-          this.stickerPickerState = { status: "loading" };
-          this.safeInvoke("tg_request_stickers");
-          this.renderStickerPanel();
-        });
-        this.stickerPanelEl.appendChild(retry);
-      }
+      this.showStickerPanelMessage(emptyMessage, this.stickerPickerState.status === "error");
       return;
     }
 
+    const packs = withRecentPack(this.stickerPacks, this.recentStickerIds);
     const availablePacks = packs.filter((pack) => pack.stickers.length > 0);
     if (availablePacks.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "sticker-panel__empty";
-      empty.textContent = t("В этих наборах пока нет превью стикеров");
-      this.stickerPanelEl.appendChild(empty);
+      this.showStickerPanelMessage(t("В этих наборах пока нет превью стикеров"), false);
       return;
     }
 
@@ -869,21 +899,69 @@ class OverlayApp {
       this.selectedStickerPackId = availablePacks[0].id;
     }
 
-    const search = document.createElement("input");
-    search.type = "search";
-    search.className = "sticker-search";
+    const search = this.stickerSearchEl;
     search.placeholder = t("Поиск стикеров");
-    search.value = this.stickerSearchQuery;
     search.setAttribute("aria-label", t("Поиск стикеров в выбранном наборе"));
-    search.addEventListener("input", () => {
-      this.stickerSearchQuery = search.value;
-      this.renderStickerPanel(true);
-    });
+    // Only a programmatic change (another tab, a reopened panel) touches the
+    // value: rewriting it while the user types would move the caret.
+    if (search.value !== this.stickerSearchQuery) search.value = this.stickerSearchQuery;
 
-    const tabs = document.createElement("div");
-    tabs.className = "sticker-tabs";
-    tabs.setAttribute("role", "tablist");
-    for (const pack of availablePacks) {
+    this.renderStickerTabs(availablePacks);
+
+    const progress = pickerProgressMessage(this.stickerPickerState);
+    this.stickerProgressEl.textContent = progress ?? "";
+    this.stickerProgressEl.hidden = !progress;
+    this.stickerRefreshEl.textContent = t("Обновить");
+
+    const selectedPack = availablePacks.find((pack) => pack.id === this.selectedStickerPackId) ?? availablePacks[0];
+    const stickers = filterStickers([selectedPack], this.stickerSearchQuery)[0]?.stickers ?? [];
+    let body: HTMLElement;
+    if (stickers.length === 0) {
+      this.clearStickerGrid();
+      this.stickerNoResultsEl.textContent = t("Ничего не найдено");
+      body = this.stickerNoResultsEl;
+    } else {
+      this.syncStickerGrid(stickers);
+      body = this.stickerGridEl;
+    }
+
+    const panel = this.stickerPanelEl;
+    const chrome = [search, this.stickerTabsEl, this.stickerToolsEl];
+    if (panel.children.length !== 4 || chrome.some((child, index) => panel.children[index] !== child)) {
+      panel.replaceChildren(...chrome, body);
+    } else if (panel.children[3] !== body) {
+      // Re-appending the search field would blur it; swap just the body.
+      panel.children[3].replaceWith(body);
+    }
+  }
+
+  private showStickerPanelMessage(message: string, retryable: boolean): void {
+    this.clearStickerGrid();
+    const empty = document.createElement("div");
+    empty.className = "sticker-panel__empty";
+    empty.textContent = message;
+    const children: HTMLElement[] = [empty];
+    if (retryable) {
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "sticker-panel__retry";
+      retry.textContent = t("Повторить");
+      retry.addEventListener("click", () => {
+        this.stickerPacksRequested = true;
+        this.stickerPickerState = { status: "loading" };
+        this.safeInvoke("tg_request_stickers");
+        this.renderStickerPanel();
+      });
+      children.push(retry);
+    }
+    this.stickerPanelEl.replaceChildren(...children);
+  }
+
+  private renderStickerTabs(packs: StickerPack[]): void {
+    const key = JSON.stringify([this.selectedStickerPackId, packs.map((pack) => [pack.id, t(pack.title)])]);
+    if (key === this.stickerTabsKey) return;
+    this.stickerTabsKey = key;
+    const tabs = packs.map((pack) => {
       const tab = document.createElement("button");
       tab.type = "button";
       tab.className = "sticker-tab";
@@ -895,81 +973,74 @@ class OverlayApp {
         this.stickerSearchQuery = "";
         this.renderStickerPanel();
       });
-      tabs.appendChild(tab);
-    }
-    this.stickerPanelEl.append(search, tabs);
-
-    const tools = document.createElement("div");
-    tools.className = "sticker-panel__tools";
-    const progress = pickerProgressMessage(this.stickerPickerState);
-    if (progress) {
-      const status = document.createElement("span");
-      status.className = "sticker-panel__progress";
-      status.textContent = progress;
-      tools.appendChild(status);
-    }
-    const refresh = document.createElement("button");
-    refresh.type = "button";
-    refresh.className = "sticker-panel__refresh";
-    refresh.textContent = t("Обновить");
-    refresh.addEventListener("click", () => {
-      this.stickerPacksRequested = true;
-      this.safeInvoke("tg_request_stickers", { refresh: true });
+      return tab;
     });
-    tools.appendChild(refresh);
-    this.stickerPanelEl.appendChild(tools);
+    this.stickerTabsEl.replaceChildren(...tabs);
+  }
 
-    const selectedPack = availablePacks.find((pack) => pack.id === this.selectedStickerPackId) ?? availablePacks[0];
-    const stickers = filterStickers([selectedPack], this.stickerSearchQuery)[0]?.stickers ?? [];
-    if (stickers.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "sticker-panel__empty";
-      empty.textContent = t("Ничего не найдено");
-      this.stickerPanelEl.appendChild(empty);
-      if (focusSearch) search.focus();
-      return;
+  private syncStickerGrid(stickers: StickerRef[]): void {
+    const plan = planStickerGrid(this.stickerGridItems, stickers);
+    if (plan.rebuild) {
+      this.clearStickerGrid();
+      for (const sticker of stickers) this.stickerGridItems.push(this.buildStickerItem(sticker));
+      this.stickerGridEl.replaceChildren(...this.stickerGridItems.map((item) => item.button));
+    } else {
+      const changed = new Set(plan.changed);
+      this.stickerGridItems.forEach((item, index) => {
+        if (!changed.has(item.fileId)) return;
+        const next = this.buildStickerItem(stickers[index]);
+        item.lottie?.destroy();
+        item.button.replaceWith(next.button);
+        this.stickerGridItems[index] = next;
+      });
     }
+    stickers.forEach((sticker, index) => {
+      this.stickerGridItems[index].button.disabled = sticker.documentReady === false;
+    });
+  }
 
-    const grid = document.createElement("div");
-    grid.className = "sticker-grid";
-    for (const sticker of stickers) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "sticker-item";
-      button.disabled = sticker.documentReady === false;
-      if (sticker.dataUrl) {
-        if (sticker.dataUrl.startsWith("data:video/")) {
-          const video = document.createElement("video");
-          video.src = sticker.dataUrl;
-          video.muted = true;
-          video.loop = true;
-          video.playsInline = true;
-          video.autoplay = true;
-          video.setAttribute("aria-label", sticker.emoji ?? t("Анимированный стикер"));
-          button.appendChild(video);
-        } else if (sticker.dataUrl.startsWith("data:application/x-tgsticker")) {
-          const animation = document.createElement("span");
-          animation.className = "sticker-item__animation";
-          animation.setAttribute("aria-label", sticker.emoji ?? t("Анимированный стикер"));
-          button.appendChild(animation);
-          void this.mountPickerLottie(animation, sticker.dataUrl, renderVersion);
-        } else {
-          const img = document.createElement("img");
-          img.src = sticker.dataUrl;
-          img.alt = sticker.emoji ?? "";
-          button.appendChild(img);
-        }
+  private buildStickerItem(sticker: StickerRef): StickerGridItem {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "sticker-item";
+    const item: StickerGridItem = { fileId: sticker.fileId, dataUrl: sticker.dataUrl, button, lottie: null };
+    if (sticker.dataUrl) {
+      if (sticker.dataUrl.startsWith("data:video/")) {
+        const video = document.createElement("video");
+        video.src = sticker.dataUrl;
+        video.muted = true;
+        video.loop = true;
+        video.playsInline = true;
+        video.autoplay = true;
+        video.setAttribute("aria-label", sticker.emoji ?? t("Анимированный стикер"));
+        button.appendChild(video);
+      } else if (sticker.dataUrl.startsWith("data:application/x-tgsticker")) {
+        const animation = document.createElement("span");
+        animation.className = "sticker-item__animation";
+        animation.setAttribute("aria-label", sticker.emoji ?? t("Анимированный стикер"));
+        button.appendChild(animation);
+        void this.mountPickerLottie(item, animation, sticker.dataUrl);
       } else {
-        const fallback = document.createElement("span");
-        fallback.className = "sticker-item__fallback";
-        fallback.textContent = sticker.emoji ?? "◌";
-        button.appendChild(fallback);
+        const img = document.createElement("img");
+        img.src = sticker.dataUrl;
+        img.alt = sticker.emoji ?? "";
+        button.appendChild(img);
       }
-      button.addEventListener("click", () => this.sendSticker(sticker.fileId));
-      grid.appendChild(button);
+    } else {
+      const fallback = document.createElement("span");
+      fallback.className = "sticker-item__fallback";
+      fallback.textContent = sticker.emoji ?? "◌";
+      button.appendChild(fallback);
     }
-    this.stickerPanelEl.appendChild(grid);
-    if (focusSearch) search.focus();
+    button.addEventListener("click", () => this.sendSticker(sticker.fileId));
+    return item;
+  }
+
+  /** Empties the grid and stops its animations (panel closed, another pack, a message instead). */
+  private clearStickerGrid(): void {
+    for (const item of this.stickerGridItems) item.lottie?.destroy();
+    this.stickerGridItems.length = 0;
+    this.stickerGridEl.replaceChildren();
   }
 
   private sendSticker(fileId: string): void {
@@ -1395,31 +1466,27 @@ class OverlayApp {
     }
   }
 
-  private async mountPickerLottie(container: HTMLElement, dataUrl: string, renderVersion: number): Promise<void> {
+  private async mountPickerLottie(item: StickerGridItem, container: HTMLElement, dataUrl: string): Promise<void> {
+    // The grid may have dropped or replaced this sticker while it loaded.
+    const current = () => container.isConnected && this.stickerGridItems.includes(item);
     try {
       const [animationData, { default: lottie }] = await Promise.all([
         inflateTgsAnimationData(dataUrl),
         import("lottie-web/build/player/lottie_light"),
       ]);
-      if (!container.isConnected || renderVersion !== this.stickerPickerRenderVersion) return;
+      if (!current()) return;
 
-      const instance = lottie.loadAnimation({
+      item.lottie = lottie.loadAnimation({
         container,
         renderer: "svg",
         loop: true,
         autoplay: true,
         animationData,
       });
-      this.pickerLotties.add(instance);
     } catch {
-      if (!container.isConnected || renderVersion !== this.stickerPickerRenderVersion) return;
+      if (!current()) return;
       container.textContent = "◌";
     }
-  }
-
-  private destroyPickerLotties(): void {
-    for (const animation of this.pickerLotties) animation.destroy();
-    this.pickerLotties.clear();
   }
 
   private renderMediaFailure(container: HTMLElement, kind: MediaKind, messageId: string): void {

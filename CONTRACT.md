@@ -47,7 +47,7 @@ expressed as fractions of the window (see `src/core/zones.ts`).
 | `tg:direction` | `{ requestId: string, direction: "up" \| "down" \| "left" \| "right", at: number }` | Native passive key observer requests an editable Telegram direction message |
 | `tg:send_sticker` | `{ requestId: string, fileId: string }` | Same for a sticker |
 | `tg:stickers_request` | `{ refresh: boolean }` | The overlay wants cached packs or a forced refresh |
-| `tg:stickers` | `{ packs: StickerPack[], phase: "metadata" \| "previews" \| "complete", error?: string }` | Worker streams metadata and progressively hydrated previews |
+| `tg:stickers` | `{ packs?: StickerPack[], previews?: { fileId: string, dataUrl: string }[], phase: "metadata" \| "previews" \| "complete", error?: string }` | Worker streams metadata and progressively hydrated previews. `packs` replaces the picker's packs; a payload without `packs` merges `previews` into the packs already held (the relay worker sends each preview once this way instead of republishing the whole index) |
 | `tg:send_file` | `{ requestId: string, dataUrl: string, caption: string \| null }` | A pasted image to deliver |
 | `overlay:send_result` | `{ requestId, kind, ok, error?, messageId? }` | Correlated final result of a Telegram send |
 | `overlay:paused` | `{ paused: boolean }` | Paused from the tray |

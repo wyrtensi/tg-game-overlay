@@ -252,6 +252,37 @@ describe("RelayWorker", () => {
     expect(store.entries.has(bigId)).toBe(false);
   });
 
+  it("sends each sticker preview over IPC once", async () => {
+    const { calls, connections, emit, store } = await setup();
+    const ids: string[] = [];
+    for (let index = 0; index < 40; index += 1) {
+      const bytes = new Uint8Array([index, 1, 2, 3]);
+      const id = await sha256Hex(bytes);
+      ids.push(id);
+      if (index < 5) store.entries.set(id, { id, kind: "webp", b64: bytesToBase64(bytes), lastUsedAt: 0 });
+      else connections[0].stickers.set(id, { id, kind: "webp", b64: bytesToBase64(bytes) });
+    }
+    connections[0].stickerIndex = async () => ({
+      version: "v",
+      packs: [{ id: "p", title: "Pack", stickers: ids.map((id) => ({ id, kind: "webp" as const, size: 4 })) }],
+    });
+    connections[0].goOnline();
+    emit("tg:stickers_request", { refresh: false });
+    const payloads = () => calls.filter((call) => call.command === "tg_stickers").map((call) => call.args?.payload as {
+      phase: string;
+      packs?: { stickers: { fileId: string; dataUrl?: string }[] }[];
+      previews?: { fileId: string; dataUrl: string }[];
+    });
+    await vi.waitFor(() => expect(payloads()[payloads().length - 1]?.phase).toBe("complete"));
+
+    const [metadata, ...updates] = payloads();
+    expect(metadata.phase).toBe("metadata");
+    expect(metadata.packs?.[0].stickers.filter((sticker) => sticker.dataUrl)).toHaveLength(5);
+    expect(updates.every((update) => update.packs === undefined)).toBe(true);
+    const streamed = updates.flatMap((update) => update.previews ?? []).map((preview) => preview.fileId);
+    expect(streamed.sort()).toEqual(ids.slice(5).sort());
+  });
+
   it("refuses images over the relay limit", async () => {
     const { calls, connections, emit } = await setup();
     connections[0].goOnline();
