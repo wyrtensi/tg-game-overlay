@@ -38,7 +38,8 @@ expressed as fractions of the window (see `src/core/zones.ts`).
 | `overlay:markup` | `{ active: boolean }` | Markup mode on/off |
 | `config:changed` | `Config` (see below) | Settings changed, main window should re-render |
 | `tg:status` | `{ state: "offline" \| "connecting" \| "reconnecting" \| "code" \| "password" \| "connected" \| "reauth_required" \| "error", phone?, error?, waitSeconds?, reconnectAttempt? }` | Worker reports where the login or connection stands |
-| `tg:login` | `{ step: "phone" \| "code" \| "password" \| "logout", value?: string }` | The user submitted a login step in the settings window |
+| `tg:api_keys_changed` | `{}` | Keys were saved or cleared; the Telegram worker reads them back with `tg_api_keys` |
+| `tg:login` | `{}` | A login step (phone, code, password or logout) is queued; the Telegram worker pulls it with `tg_take_login_step`. Events reach every webview, so the values never travel in one |
 | `tg:reconnect_now` | `{}` | Settings asks the worker to skip the current reconnect delay |
 | `tg:dialogs_request` | `{ query: string \| null }` | Settings window asks the worker for the chat list |
 | `tg:dialogs` | `{ dialogs: ChatRef[], error?: string }` | Worker answers with chats or a load error |
@@ -107,7 +108,8 @@ like the session and key commands. Any other window gets an error string.
 | `tg_session` | - | `string \| null` |
 | `tg_clear_session` | - | `void` (removes only the saved session after it was revoked) |
 | `tg_logout` | - | `void` |
-| `tg_login_step` | `{ step, value }` | `void` (emits `tg:login`) |
+| `tg_login_step` | `{ step: "phone" \| "code" \| "password", value }` | `void` (main window only; queues the step and emits `tg:login`) |
+| `tg_take_login_step` | - | `{ step, value } \| null` (Telegram worker only; next queued login step) |
 | `tg_reconnect_now` | - | `void` (emits `tg:reconnect_now`) |
 | `tg_status` | `{ status }` | `void` (emits `tg:status`; flips the demo feed off when connected) |
 | `tg_current_status` | - | latest `TgStatus` reported by the worker |

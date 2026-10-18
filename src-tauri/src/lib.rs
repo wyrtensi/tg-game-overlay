@@ -73,6 +73,10 @@ pub struct AppState {
     telegram_worker_ready: Mutex<bool>,
     /// Retains an overlay history request until the Telegram window is ready.
     pending_history_request: Mutex<bool>,
+    /// Login steps (phone, code, 2FA password) waiting for the Telegram worker.
+    /// Events reach every webview, so the values never travel in one: the
+    /// worker pulls them with tg_take_login_step, which only it may call.
+    pending_login_steps: Mutex<std::collections::VecDeque<(String, String)>>,
     phrase_wheel: Mutex<phrase_wheel::WheelLifecycle>,
 }
 
@@ -1707,11 +1711,32 @@ fn tg_api_keys(app: AppHandle, window: WebviewWindow) -> Result<serde_json::Valu
     Ok(serde_json::json!({ "apiId": api_id, "apiHash": api_hash }))
 }
 
-fn emit_api_keys_changed(app: &AppHandle, api_id: i32, api_hash: String) {
-    let _ = app.emit(
-        "tg:api_keys_changed",
-        serde_json::json!({ "apiId": api_id, "apiHash": api_hash }),
-    );
+/// Only a nudge: the keys themselves are read back with tg_api_keys, which
+/// is restricted to the Telegram worker, because events reach every webview.
+fn emit_api_keys_changed(app: &AppHandle) {
+    let _ = app.emit("tg:api_keys_changed", serde_json::json!({}));
+}
+
+const MAX_PENDING_LOGIN_STEPS: usize = 8;
+
+fn queue_login_step(app: &AppHandle, step: &str, value: String) {
+    {
+        let state = app.state::<AppState>();
+        let mut queue = state.pending_login_steps.lock().unwrap();
+        if queue.len() >= MAX_PENDING_LOGIN_STEPS {
+            queue.pop_front();
+        }
+        queue.push_back((step.to_string(), value));
+    }
+    let _ = app.emit("tg:login", serde_json::json!({}));
+}
+
+/// The Telegram worker takes the next login step queued by the settings window.
+#[tauri::command]
+fn tg_take_login_step(app: AppHandle, window: WebviewWindow) -> Result<Option<serde_json::Value>, String> {
+    require_telegram_worker(&window)?;
+    let next = app.state::<AppState>().pending_login_steps.lock().unwrap().pop_front();
+    Ok(next.map(|(step, value)| serde_json::json!({ "step": step, "value": value })))
 }
 
 #[tauri::command]
@@ -1733,7 +1758,7 @@ fn tg_save_api_keys(
     let mut config = get_config(app.clone());
     config.api_id = Some(api_id);
     let config = save_config(&app, config)?;
-    emit_api_keys_changed(&app, api_id, api_hash);
+    emit_api_keys_changed(&app);
     Ok(config)
 }
 
@@ -1751,7 +1776,7 @@ fn tg_clear_api_keys(app: AppHandle, window: WebviewWindow) -> Result<Config, St
     let mut config = get_config(app.clone());
     config.api_id = None;
     let config = save_config(&app, config)?;
-    emit_api_keys_changed(&app, credentials::API_ID, credentials::api_hash());
+    emit_api_keys_changed(&app);
     Ok(config)
 }
 
@@ -1807,7 +1832,7 @@ fn tg_logout(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
         .unwrap_or_default();
     secrets::clear(&dir, "session");
     *app.state::<AppState>().connected.lock().unwrap() = false;
-    let _ = app.emit("tg:login", serde_json::json!({ "step": "logout" }));
+    queue_login_step(&app, "logout", String::new());
     Ok(())
 }
 
@@ -1820,10 +1845,10 @@ fn tg_login_step(
     value: String,
 ) -> Result<(), String> {
     require_main_window(&window)?;
-    let _ = app.emit(
-        "tg:login",
-        serde_json::json!({ "step": step, "value": value }),
-    );
+    if !matches!(step.as_str(), "phone" | "code" | "password") {
+        return Err(format!("unknown login step: {step}"));
+    }
+    queue_login_step(&app, &step, value);
     Ok(())
 }
 
@@ -2341,6 +2366,7 @@ pub fn run() {
             tg_clear_session,
             tg_logout,
             tg_login_step,
+            tg_take_login_step,
             tg_reconnect_now,
             tg_status,
             tg_current_status,
@@ -2408,6 +2434,7 @@ pub fn run() {
                 telegram_status: Mutex::new(serde_json::json!({ "state": "offline" })),
                 telegram_worker_ready: Mutex::new(false),
                 pending_history_request: Mutex::new(false),
+                pending_login_steps: Mutex::new(std::collections::VecDeque::new()),
                 phrase_wheel: Mutex::new(phrase_wheel::WheelLifecycle::default()),
             });
 

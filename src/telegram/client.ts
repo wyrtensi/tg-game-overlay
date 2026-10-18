@@ -180,7 +180,14 @@ export class TelegramWorker {
     };
 
     await Promise.all([
-      safeListen<TgLoginEvent>("tg:login", whenActive((evt) => this.onLoginEvent(evt))),
+      // The event carries no values (it reaches every page); the step itself
+      // is pulled from Rust, which only hands it to this worker. Always drain
+      // the queue so an idle worker never replays a stale step later.
+      safeListen<Record<string, never>>("tg:login", () => {
+        void safeInvoke<TgLoginEvent | null>("tg_take_login_step").then((step) => {
+          if (step && this.active) return this.onLoginEvent(step);
+        });
+      }),
       safeListen<Record<string, never>>("tg:history_request", whenActive(() => {
         // The overlay page (re)started with an empty feed: everything is new
         // to it, now or after the next connect. Media comes from pushedMedia.
@@ -205,15 +212,18 @@ export class TelegramWorker {
           });
         }
       }),
-      safeListen<TelegramCredentials>("tg:api_keys_changed", (credentials) => {
-        const updated = applyCredentialUpdate(
-          { apiId: this.apiId, apiHash: this.apiHash },
-          credentials,
-        );
-        this.apiId = updated.apiId;
-        this.apiHash = updated.apiHash;
-        // Keys saved after a start without them: pick the saved session up now.
-        if (this.active && !this.client && !this.loginInProgress && this.hasApiKeys()) void this.connectSavedSession();
+      // A nudge only: the keys are read back through a command reserved for this worker.
+      safeListen<Record<string, never>>("tg:api_keys_changed", () => {
+        void safeInvoke<TelegramCredentials>("tg_api_keys").then((credentials) => {
+          const updated = applyCredentialUpdate(
+            { apiId: this.apiId, apiHash: this.apiHash },
+            credentials,
+          );
+          this.apiId = updated.apiId;
+          this.apiHash = updated.apiHash;
+          // Keys saved after a start without them: pick the saved session up now.
+          if (this.active && !this.client && !this.loginInProgress && this.hasApiKeys()) void this.connectSavedSession();
+        });
       }),
       safeListen("tg:reconnect_now", whenActive(() => this.reconnectLoop.retryNow())),
       safeListen<{ query: string | null }>("tg:dialogs_request", whenActive((req) => this.onDialogsRequest(req.query))),
