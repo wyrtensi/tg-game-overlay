@@ -23,9 +23,10 @@ import { filterStickers, pushRecent, type StickerPack, withRecentPack } from "./
 import { messageClassNames, messageContent, messageTime, messageTimestamp } from "./message-presentation";
 import { messageChanged } from "./message-update";
 import { pickerEmptyMessage, pickerProgressMessage, type StickerPickerState } from "./sticker-picker-state";
+import { isDuplicateSend, type PendingSend } from "./send-state";
 import { DirectionSignalStore } from "./direction-signal";
 import { phraseWheelItems, wheelOrigin } from "./phrase-wheel";
-import type { SendKind, SendResult } from "../telegram/send-result";
+import type { SendResult } from "../telegram/send-result";
 import type { Direction } from "../telegram/direction-message";
 import { applyTranslations, resolveLanguage, setLocale, t } from "../i18n";
 
@@ -81,11 +82,6 @@ interface PendingAttachment {
   name: string;
 }
 
-interface PendingSend {
-  kind: SendKind;
-  text?: string;
-  stickerId?: string;
-}
 
 function loadRecentStickers(): string[] {
   try {
@@ -671,7 +667,7 @@ class OverlayApp {
     this.inputEl.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        this.sendMessage();
+        if (!e.repeat) this.sendMessage();
       } else if (e.key === "Escape") {
         e.preventDefault();
         this.safeInvoke("dismiss");
@@ -694,21 +690,29 @@ class OverlayApp {
 
   private sendMessage(): void {
     const text = this.inputEl.value.trim();
+    const attachment = this.pendingAttachment?.dataUrl;
+    if (!attachment && !text) return;
+    const candidate = attachment ? { kind: "file" as const, text, attachment } : { kind: "text" as const, text };
+    const now = Date.now();
+    if (isDuplicateSend(this.pendingSends.values(), candidate, now)) return;
+
     const requestId = this.newRequestId();
     this.clearSendError();
-
-    if (this.pendingAttachment) {
-      this.pendingSends.set(requestId, { kind: "file", text });
-      this.safeInvoke("send_file", {
-        requestId,
-        dataUrl: this.pendingAttachment.dataUrl,
-        caption: text || undefined,
-      });
+    this.pendingSends.set(requestId, { ...candidate, startedAt: now });
+    if (attachment) {
+      this.invokeSend(requestId, "send_file", { requestId, dataUrl: attachment, caption: text || undefined });
     } else {
-      if (!text) return;
-      this.pendingSends.set(requestId, { kind: "text", text });
-      this.safeInvoke("send_message", { requestId, text });
+      this.invokeSend(requestId, "send_message", { requestId, text });
     }
+  }
+
+  /** Like safeInvoke, but a rejected send stops counting as pending and says so. */
+  private invokeSend(requestId: string, cmd: string, args: Record<string, unknown>): void {
+    if (!isTauri()) return;
+    void invoke(cmd, args).catch((err: unknown) => {
+      if (!this.pendingSends.delete(requestId)) return;
+      this.showSendError(typeof err === "string" ? err : "Telegram не подтвердил отправку");
+    });
   }
 
   private handlePaste(e: ClipboardEvent): void {
@@ -962,8 +966,8 @@ class OverlayApp {
   private sendSticker(fileId: string): void {
     const requestId = this.newRequestId();
     this.clearSendError();
-    this.pendingSends.set(requestId, { kind: "sticker", stickerId: fileId });
-    this.safeInvoke("send_sticker", { requestId, fileId });
+    this.pendingSends.set(requestId, { kind: "sticker", stickerId: fileId, startedAt: Date.now() });
+    this.invokeSend(requestId, "send_sticker", { requestId, fileId });
   }
 
   // -- Markup mode --
