@@ -213,6 +213,37 @@ describe("RelayWorker", () => {
     expect(connections[0].sent).toHaveLength(0);
   });
 
+  it("reconnects once per relay settings save, with the reloaded secrets", async () => {
+    const { calls, connections, emit, setConfig } = await setup();
+    const moved = { ...SETTINGS, url: "203.0.113.20:8790" };
+    // set_relay_settings: config:changed first (old secrets still loaded), then relay:settings_changed.
+    setConfig({ transport: "relay", relay: moved });
+    await flush();
+    expect(calls.some((call) => call.command === "reset_overlay_feed")).toBe(false);
+    emit("relay:settings_changed");
+    await vi.waitFor(() => expect(connections).toHaveLength(2));
+    await flush();
+    expect(connections).toHaveLength(2);
+    expect(connections[1].options.url).toBe("ws://203.0.113.20:8790/ws");
+    expect(calls.filter((call) => call.command === "reset_overlay_feed")).toHaveLength(1);
+  });
+
+  it("keeps the session when a save does not change the room", async () => {
+    const { connections, emit, setConfig } = await setup();
+    setConfig({ transport: "relay", relay: { ...SETTINGS, displayName: "Sam" } });
+    emit("relay:settings_changed");
+    await flush();
+    await flush();
+    expect(connections).toHaveLength(1);
+    expect(connections[0].stopped).toBe(false);
+  });
+
+  it("connects when the transport switches to the relay", async () => {
+    const { connections, setConfig } = await setup({ transport: "telegram", relay: SETTINGS });
+    setConfig({ transport: "relay", relay: SETTINGS });
+    await vi.waitFor(() => expect(connections).toHaveLength(1));
+  });
+
   it("disconnects when the transport switches back to Telegram", async () => {
     const { connections, setConfig } = await setup();
     setConfig({ transport: "telegram", relay: SETTINGS });

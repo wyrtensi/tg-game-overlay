@@ -110,7 +110,7 @@ export class RelayWorker {
   async start(): Promise<void> {
     const { listen } = this.deps;
     await Promise.all([
-      listen<RelayWorkerConfig>("config:changed", (config) => void this.applyConfig(config, false)),
+      listen<RelayWorkerConfig>("config:changed", (config) => void this.applyConfig(config, "config")),
       listen("relay:settings_changed", () => void this.reloadEverything()),
       listen("tg:history_request", () => void this.replayHistory()),
       listen("tg:reconnect_now", () => this.whenActive(() => this.session?.connection.retryNow())),
@@ -138,10 +138,17 @@ export class RelayWorker {
   private async reloadEverything(): Promise<void> {
     this.credentials = await this.deps.invoke<RelayCredentials>("relay_credentials");
     const config = await this.deps.invoke<RelayWorkerConfig>("get_config");
-    await this.applyConfig(config, true);
+    await this.applyConfig(config, "settings");
   }
 
-  private async applyConfig(config: RelayWorkerConfig, force: boolean): Promise<void> {
+  /**
+   * `config:changed` only switches the transport on or off. set_relay_settings
+   * saves the config (config:changed, while this worker still holds the old
+   * secrets) and then emits relay:settings_changed, which reloads the secrets
+   * and is the one place that reconnects - otherwise a single save would run
+   * the key derivation twice and reset the feed twice.
+   */
+  private async applyConfig(config: RelayWorkerConfig, source: "config" | "settings"): Promise<void> {
     const wasActive = this.active;
     setLocale(resolveLanguage(config.language, typeof navigator === "undefined" ? [] : navigator.languages ?? []));
     this.active = config.transport === "relay";
@@ -150,8 +157,10 @@ export class RelayWorker {
       if (wasActive) this.closeSession();
       return;
     }
+    if (source === "config" && wasActive) return;
     const key = settingsKey(this.settings, this.credentials);
-    if (!force && wasActive && key === (this.session?.key ?? this.pendingKey)) return;
+    // A save that keeps the room (say, a new display name) keeps the session.
+    if (wasActive && key !== null && key === (this.session?.key ?? this.pendingKey)) return;
     await this.openSession(key);
   }
 
