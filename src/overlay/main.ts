@@ -21,6 +21,7 @@ import { playbackDeadline, remainingPlaybackMs } from "./sticker-playback";
 import { isNearBottom } from "./scroll";
 import { filterStickers, pushRecent, type StickerPack, withRecentPack } from "./stickers";
 import { messageClassNames, messageContent, messageTime, messageTimestamp } from "./message-presentation";
+import { messageChanged } from "./message-update";
 import { pickerEmptyMessage, pickerProgressMessage, type StickerPickerState } from "./sticker-picker-state";
 import { DirectionSignalStore } from "./direction-signal";
 import { phraseWheelItems, wheelOrigin } from "./phrase-wheel";
@@ -394,8 +395,10 @@ class OverlayApp {
       // The worker can push the same id twice: once with just text, again
       // once the media has finished downloading. Patch the existing node in
       // place rather than waiting for the normal add/remove diff, which
-      // would never notice (the id was already tracked either way).
-      const alreadyTracked = this.feedNodes.has(payload.id);
+      // would never notice (the id was already tracked either way). An
+      // unchanged re-push leaves the line alone so animations do not replay.
+      const tracked = this.feedNodes.get(payload.id);
+      const repaint = tracked !== undefined && messageChanged(tracked.message, this.mediaById.get(payload.id), payload);
       if (payload.media) this.mediaById.set(payload.id, payload.media);
 
       this.feed.add(payload, mode);
@@ -407,7 +410,7 @@ class OverlayApp {
         this.evictMedia(id);
       }
 
-      if (alreadyTracked) {
+      if (repaint) {
         this.patchMessageContent(payload);
       }
       this.render();
