@@ -152,6 +152,24 @@ fn is_single_key_shortcut(hotkey: &str) -> bool {
     !hotkey.contains('+')
 }
 
+/// Settings store and show the Windows key as "Win", while global-hotkey only
+/// understands "Super", so the name is swapped right before parsing.
+fn parse_hotkey(hotkey: &str) -> Result<Shortcut, String> {
+    hotkey
+        .split('+')
+        .map(|part| {
+            if part.trim().eq_ignore_ascii_case("win") {
+                "Super"
+            } else {
+                part
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("+")
+        .parse::<Shortcut>()
+        .map_err(|error| error.to_string())
+}
+
 fn should_register_chat_shortcut(
     hotkey: &str,
     kind: Kind,
@@ -203,7 +221,7 @@ fn sync_single_key_chat_shortcut(app: &AppHandle) {
     let game_foreground = *app_state.game_foreground.lock().unwrap();
     let should_register =
         should_register_chat_shortcut(hotkey, kind, markup, paused, game_foreground);
-    let Ok(shortcut) = hotkey.parse::<Shortcut>() else {
+    let Ok(shortcut) = parse_hotkey(hotkey) else {
         return;
     };
     let manager = app.global_shortcut();
@@ -575,8 +593,7 @@ fn set_flags(app: AppHandle, autostart: bool, demo_feed: bool) -> Result<Config,
 
 #[tauri::command]
 fn set_hotkey(app: AppHandle, hotkey: String, markup: Option<bool>) -> Result<Config, String> {
-    let shortcut: Shortcut = hotkey
-        .parse()
+    let shortcut = parse_hotkey(&hotkey)
         .map_err(|_| format!("Не удалось разобрать сочетание: {hotkey}"))?;
 
     let mut config = get_config(app.clone());
@@ -591,7 +608,7 @@ fn set_hotkey(app: AppHandle, hotkey: String, markup: Option<bool>) -> Result<Co
         config.hotkey.clone()
     };
 
-    if previous.parse::<Shortcut>().ok().as_ref() == Some(&shortcut) {
+    if parse_hotkey(&previous).ok().as_ref() == Some(&shortcut) {
         return Ok(config);
     }
     let other = if is_markup_shortcut {
@@ -599,8 +616,8 @@ fn set_hotkey(app: AppHandle, hotkey: String, markup: Option<bool>) -> Result<Co
     } else {
         &config.markup_hotkey
     };
-    if other.parse::<Shortcut>().ok().as_ref() == Some(&shortcut)
-        || config.phrase_wheel.hotkey.parse::<Shortcut>().ok().as_ref() == Some(&shortcut)
+    if parse_hotkey(other).ok().as_ref() == Some(&shortcut)
+        || parse_hotkey(&config.phrase_wheel.hotkey).ok().as_ref() == Some(&shortcut)
     {
         return Err("Это сочетание уже используется другой функцией приложения".into());
     }
@@ -628,7 +645,7 @@ fn set_hotkey(app: AppHandle, hotkey: String, markup: Option<bool>) -> Result<Co
             }
             "unregister:old" => {
                 if unregister_old {
-                    if let Ok(old) = previous.parse::<Shortcut>() {
+                    if let Ok(old) = parse_hotkey(&previous) {
                         if manager.is_registered(old.clone()) {
                             if let Err(error) = manager.unregister(old) {
                                 if registered_new {
@@ -903,18 +920,16 @@ fn set_phrase_wheel_settings(
     cancel_phrase_wheel(&app);
     let mut config = get_config(app.clone());
     let settings = normalize_phrase_wheel_settings(settings)?;
-    let shortcut: Shortcut = settings
-        .hotkey
-        .parse()
+    let shortcut = parse_hotkey(&settings.hotkey)
         .map_err(|_| format!("Не удалось разобрать сочетание: {}", settings.hotkey))?;
     for reserved in [&config.hotkey, &config.markup_hotkey] {
-        if reserved.parse::<Shortcut>().ok().as_ref() == Some(&shortcut) {
+        if parse_hotkey(reserved).ok().as_ref() == Some(&shortcut) {
             return Err("Это сочетание уже используется другой функцией приложения".into());
         }
     }
 
     let previous = config.phrase_wheel.clone();
-    let same_shortcut = previous.hotkey.parse::<Shortcut>().ok().as_ref() == Some(&shortcut);
+    let same_shortcut = parse_hotkey(&previous.hotkey).ok().as_ref() == Some(&shortcut);
     for step in phrase_wheel_shortcut_steps(previous.enabled, settings.enabled, same_shortcut) {
         match *step {
             "register:new" => app
@@ -922,7 +937,7 @@ fn set_phrase_wheel_settings(
                 .register(shortcut.clone())
                 .map_err(|error| format!("Сочетание занято другой программой: {error}"))?,
             "unregister:old" => {
-                if let Ok(old) = previous.hotkey.parse::<Shortcut>() {
+                if let Ok(old) = parse_hotkey(&previous.hotkey) {
                     if let Err(error) = app.global_shortcut().unregister(old) {
                         if settings.enabled && !same_shortcut {
                             let _ = app.global_shortcut().unregister(shortcut.clone());
@@ -1058,8 +1073,17 @@ fn phrase_wheel_shortcut_steps(
 
 #[cfg(test)]
 mod shortcut_tests {
-    use super::{chat_shortcut_error_after_attempt, normalize_phrase_wheel_settings, phrase_wheel_shortcut_steps, replacement_steps};
+    use super::{chat_shortcut_error_after_attempt, normalize_phrase_wheel_settings, parse_hotkey, phrase_wheel_shortcut_steps, replacement_steps};
     use crate::config::PhraseWheelSettings;
+
+    #[test]
+    fn parses_the_win_modifier_shown_by_the_settings_page() {
+        let win = parse_hotkey("Ctrl+Win+T").unwrap();
+        assert_eq!(Ok(win), parse_hotkey("Ctrl+Super+T"));
+        assert_eq!(parse_hotkey("win+Shift+K"), parse_hotkey("Super+Shift+K"));
+        assert!(parse_hotkey("Ctrl+Shift+M").is_ok());
+        assert!(parse_hotkey("Win").is_err());
+    }
 
     #[test]
     fn registers_the_new_shortcut_before_releasing_the_old_one() {
@@ -1886,20 +1910,13 @@ pub fn run() {
                 .with_handler(|app, shortcut, event| {
                     let config = app.state::<AppState>().config.lock().unwrap().clone();
                     let pressed = shortcut.to_string();
-                    let chat_hotkey = config
-                        .hotkey
-                        .parse::<Shortcut>()
+                    let chat_hotkey = parse_hotkey(&config.hotkey)
                         .ok()
                         .map(|value| value.to_string());
-                    let markup_hotkey = config
-                        .markup_hotkey
-                        .parse::<Shortcut>()
+                    let markup_hotkey = parse_hotkey(&config.markup_hotkey)
                         .ok()
                         .map(|value| value.to_string());
-                    let phrase_wheel_hotkey = config
-                        .phrase_wheel
-                        .hotkey
-                        .parse::<Shortcut>()
+                    let phrase_wheel_hotkey = parse_hotkey(&config.phrase_wheel.hotkey)
                         .ok()
                         .map(|value| value.to_string());
 
@@ -2073,7 +2090,7 @@ pub fn run() {
                 hotkeys.push(config.phrase_wheel.hotkey.clone());
             }
             for hotkey in hotkeys {
-                if let Ok(shortcut) = hotkey.parse::<Shortcut>() {
+                if let Ok(shortcut) = parse_hotkey(&hotkey) {
                     let _ = app.global_shortcut().register(shortcut);
                 }
             }
