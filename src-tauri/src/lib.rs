@@ -587,7 +587,12 @@ fn is_hex_color(value: &str) -> bool {
 }
 
 #[tauri::command]
-fn set_feed_settings(app: AppHandle, settings: FeedSettings) -> Result<Config, String> {
+fn set_feed_settings(
+    app: AppHandle,
+    window: WebviewWindow,
+    settings: FeedSettings,
+) -> Result<Config, String> {
+    require_main_window(&window)?;
     let mut config = get_config(app.clone());
     config.ttl_ms = settings.ttl_ms.clamp(3_000, 60_000);
     config.opacity = settings.opacity.clamp(0.0, 1.0);
@@ -635,7 +640,8 @@ fn set_feed_settings(app: AppHandle, settings: FeedSettings) -> Result<Config, S
 }
 
 #[tauri::command]
-fn set_language(app: AppHandle, language: String) -> Result<Config, String> {
+fn set_language(app: AppHandle, window: WebviewWindow, language: String) -> Result<Config, String> {
+    require_main_window(&window)?;
     if !matches!(language.as_str(), "auto" | "en" | "ru" | "zh") {
         return Err(format!("Неизвестный язык: {language}"));
     }
@@ -672,7 +678,13 @@ fn apply_autostart(enabled: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn set_flags(app: AppHandle, autostart: bool, demo_feed: bool) -> Result<Config, String> {
+fn set_flags(
+    app: AppHandle,
+    window: WebviewWindow,
+    autostart: bool,
+    demo_feed: bool,
+) -> Result<Config, String> {
+    require_main_window(&window)?;
     let mut config = get_config(app.clone());
     let previous_autostart = config.autostart;
     apply_autostart(autostart)?;
@@ -686,7 +698,13 @@ fn set_flags(app: AppHandle, autostart: bool, demo_feed: bool) -> Result<Config,
 }
 
 #[tauri::command]
-fn set_hotkey(app: AppHandle, hotkey: String, markup: Option<bool>) -> Result<Config, String> {
+fn set_hotkey(
+    app: AppHandle,
+    window: WebviewWindow,
+    hotkey: String,
+    markup: Option<bool>,
+) -> Result<Config, String> {
+    require_main_window(&window)?;
     let shortcut = parse_hotkey(&hotkey)
         .map_err(|_| format!("Не удалось разобрать сочетание: {hotkey}"))?;
 
@@ -771,8 +789,12 @@ fn set_hotkey(app: AppHandle, hotkey: String, markup: Option<bool>) -> Result<Co
 }
 
 #[tauri::command]
-fn set_markup_hotkey(app: AppHandle, hotkey: String) -> Result<Config, String> {
-    set_hotkey(app, hotkey, Some(true))
+fn set_markup_hotkey(
+    app: AppHandle,
+    window: WebviewWindow,
+    hotkey: String,
+) -> Result<Config, String> {
+    set_hotkey(app, window, hotkey, Some(true))
 }
 
 fn publish_direction(app: &AppHandle, direction: input::Direction) {
@@ -1006,7 +1028,12 @@ fn release_phrase_wheel(app: &AppHandle) {
 }
 
 #[tauri::command]
-fn set_direction_settings(app: AppHandle, settings: DirectionSettings) -> Result<Config, String> {
+fn set_direction_settings(
+    app: AppHandle,
+    window: WebviewWindow,
+    settings: DirectionSettings,
+) -> Result<Config, String> {
+    require_main_window(&window)?;
     let mut config = get_config(app.clone());
     config.direction_signals = normalize_direction_settings(settings)?;
     save_config(&app, config)
@@ -1015,8 +1042,10 @@ fn set_direction_settings(app: AppHandle, settings: DirectionSettings) -> Result
 #[tauri::command]
 fn set_phrase_wheel_settings(
     app: AppHandle,
+    window: WebviewWindow,
     settings: PhraseWheelSettings,
 ) -> Result<Config, String> {
+    require_main_window(&window)?;
     cancel_phrase_wheel(&app);
     let mut config = get_config(app.clone());
     let settings = normalize_phrase_wheel_settings(settings)?;
@@ -1063,22 +1092,31 @@ fn set_phrase_wheel_settings(
 }
 
 #[tauri::command]
-fn get_direction_message_id(app: AppHandle, account_id: String, chat_key: String) -> Option<i32> {
+fn get_direction_message_id(
+    app: AppHandle,
+    window: WebviewWindow,
+    account_id: String,
+    chat_key: String,
+) -> Result<Option<i32>, String> {
+    require_telegram_worker(&window)?;
     let cache_key = direction_cache_key(&account_id, &chat_key);
-    app.state::<AppState>()
+    Ok(app
+        .state::<AppState>()
         .runtime_cache
         .lock()
         .unwrap()
-        .get(&cache_key)
+        .get(&cache_key))
 }
 
 #[tauri::command]
 fn set_direction_message_id(
     app: AppHandle,
+    window: WebviewWindow,
     account_id: String,
     chat_key: String,
     message_id: i32,
 ) -> Result<(), String> {
+    require_telegram_worker(&window)?;
     let cache_key = direction_cache_key(&account_id, &chat_key);
     let app_state = app.state::<AppState>();
     let snapshot = {
@@ -1090,13 +1128,26 @@ fn set_direction_message_id(
 }
 
 #[tauri::command]
-fn get_phrase_message_id(app: AppHandle, account_id: String, chat_key: String) -> Option<i32> {
+fn get_phrase_message_id(
+    app: AppHandle,
+    window: WebviewWindow,
+    account_id: String,
+    chat_key: String,
+) -> Result<Option<i32>, String> {
+    require_telegram_worker(&window)?;
     let cache_key = format!("phrase|{}", direction_cache_key(&account_id, &chat_key));
-    app.state::<AppState>().runtime_cache.lock().unwrap().get(&cache_key)
+    Ok(app.state::<AppState>().runtime_cache.lock().unwrap().get(&cache_key))
 }
 
 #[tauri::command]
-fn set_phrase_message_id(app: AppHandle, account_id: String, chat_key: String, message_id: i32) -> Result<(), String> {
+fn set_phrase_message_id(
+    app: AppHandle,
+    window: WebviewWindow,
+    account_id: String,
+    chat_key: String,
+    message_id: i32,
+) -> Result<(), String> {
+    require_telegram_worker(&window)?;
     let cache_key = format!("phrase|{}", direction_cache_key(&account_id, &chat_key));
     let app_state = app.state::<AppState>();
     let snapshot = {
@@ -1335,7 +1386,8 @@ mod shortcut_tests {
 }
 
 #[tauri::command]
-fn upsert_profile(app: AppHandle, profile: Profile) -> Result<Config, String> {
+fn upsert_profile(app: AppHandle, window: WebviewWindow, profile: Profile) -> Result<Config, String> {
+    require_main_window(&window)?;
     let mut config = get_config(app.clone());
     let exe = profile.exe.to_lowercase();
     match config
@@ -1350,7 +1402,8 @@ fn upsert_profile(app: AppHandle, profile: Profile) -> Result<Config, String> {
 }
 
 #[tauri::command]
-fn remove_profile(app: AppHandle, exe: String) -> Result<Config, String> {
+fn remove_profile(app: AppHandle, window: WebviewWindow, exe: String) -> Result<Config, String> {
+    require_main_window(&window)?;
     let mut config = get_config(app.clone());
     let exe = exe.to_lowercase();
     config
@@ -1360,7 +1413,8 @@ fn remove_profile(app: AppHandle, exe: String) -> Result<Config, String> {
 }
 
 #[tauri::command]
-fn add_current_app(app: AppHandle) -> Result<Config, String> {
+fn add_current_app(app: AppHandle, window: WebviewWindow) -> Result<Config, String> {
+    require_main_window(&window)?;
     #[cfg(windows)]
     {
         let info = win32::foreground_info();
@@ -1387,7 +1441,8 @@ fn add_current_app(app: AppHandle) -> Result<Config, String> {
 }
 
 #[tauri::command]
-fn add_profile_by_exe(app: AppHandle, value: String) -> Result<Config, String> {
+fn add_profile_by_exe(app: AppHandle, window: WebviewWindow, value: String) -> Result<Config, String> {
+    require_main_window(&window)?;
     let exe = normalize_profile_exe(&value)?;
     let mut config = get_config(app.clone());
     if config.profile(&exe).is_none() {
@@ -1405,20 +1460,24 @@ struct ProfileCandidatePayload {
 }
 
 #[tauri::command]
-fn list_profile_candidates() -> Vec<ProfileCandidatePayload> {
+fn list_profile_candidates(
+    window: WebviewWindow,
+) -> Result<Vec<ProfileCandidatePayload>, String> {
+    // The list names every visible window, so only the settings window gets it.
+    require_main_window(&window)?;
     #[cfg(windows)]
     {
-        win32::profile_candidates()
+        Ok(win32::profile_candidates()
             .into_iter()
             .map(|candidate| ProfileCandidatePayload {
                 exe: candidate.exe,
                 title: candidate.title,
             })
-            .collect()
+            .collect())
     }
     #[cfg(not(windows))]
     {
-        Vec::new()
+        Ok(Vec::new())
     }
 }
 
@@ -1509,6 +1568,17 @@ fn require_telegram_worker(window: &WebviewWindow) -> Result<(), String> {
     }
 }
 
+/// Settings, secrets and the list of running windows belong to the settings
+/// window: the overlay and the workers render chat content from other people
+/// and must not be able to change or read them.
+fn require_main_window(window: &WebviewWindow) -> Result<(), String> {
+    if window.label() == MAIN {
+        Ok(())
+    } else {
+        Err("This command is only available to the settings window".into())
+    }
+}
+
 const RELAY_ACCESS_KEY: &str = "relay_access_key";
 const RELAY_PASSWORD: &str = "relay_password";
 
@@ -1549,10 +1619,12 @@ fn update_relay_secret(dir: &PathBuf, name: &str, value: Option<String>) -> Resu
 #[tauri::command]
 fn set_relay_settings(
     app: AppHandle,
+    window: WebviewWindow,
     settings: RelaySettings,
     access_key: Option<String>,
     password: Option<String>,
 ) -> Result<Config, String> {
+    require_main_window(&window)?;
     let settings = RelaySettings {
         url: settings.url.trim().to_string(),
         room: settings.room.trim().to_string(),
@@ -1579,7 +1651,8 @@ fn set_relay_settings(
 }
 
 #[tauri::command]
-fn set_transport(app: AppHandle, transport: String) -> Result<Config, String> {
+fn set_transport(app: AppHandle, window: WebviewWindow, transport: String) -> Result<Config, String> {
+    require_main_window(&window)?;
     if transport != TRANSPORT_TELEGRAM && transport != TRANSPORT_RELAY {
         return Err(format!("Неизвестный способ связи: {transport}"));
     }
@@ -1642,7 +1715,13 @@ fn emit_api_keys_changed(app: &AppHandle, api_id: i32, api_hash: String) {
 }
 
 #[tauri::command]
-fn tg_save_api_keys(app: AppHandle, api_id: i32, api_hash: String) -> Result<Config, String> {
+fn tg_save_api_keys(
+    app: AppHandle,
+    window: WebviewWindow,
+    api_id: i32,
+    api_hash: String,
+) -> Result<Config, String> {
+    require_main_window(&window)?;
     let dir = app
         .state::<AppState>()
         .config_path
@@ -1659,7 +1738,8 @@ fn tg_save_api_keys(app: AppHandle, api_id: i32, api_hash: String) -> Result<Con
 }
 
 #[tauri::command]
-fn tg_clear_api_keys(app: AppHandle) -> Result<Config, String> {
+fn tg_clear_api_keys(app: AppHandle, window: WebviewWindow) -> Result<Config, String> {
+    require_main_window(&window)?;
     let dir = app
         .state::<AppState>()
         .config_path
@@ -1717,7 +1797,8 @@ fn tg_clear_session(app: AppHandle, window: WebviewWindow) {
 }
 
 #[tauri::command]
-fn tg_logout(app: AppHandle) {
+fn tg_logout(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+    require_main_window(&window)?;
     let dir = app
         .state::<AppState>()
         .config_path
@@ -1727,15 +1808,23 @@ fn tg_logout(app: AppHandle) {
     secrets::clear(&dir, "session");
     *app.state::<AppState>().connected.lock().unwrap() = false;
     let _ = app.emit("tg:login", serde_json::json!({ "step": "logout" }));
+    Ok(())
 }
 
 /// Login steps typed by the user in the settings window: phone, code, password.
 #[tauri::command]
-fn tg_login_step(app: AppHandle, step: String, value: String) {
+fn tg_login_step(
+    app: AppHandle,
+    window: WebviewWindow,
+    step: String,
+    value: String,
+) -> Result<(), String> {
+    require_main_window(&window)?;
     let _ = app.emit(
         "tg:login",
         serde_json::json!({ "step": step, "value": value }),
     );
+    Ok(())
 }
 
 #[tauri::command]
@@ -1870,7 +1959,8 @@ fn tg_phrase(app: AppHandle, window: WebviewWindow, payload: serde_json::Value) 
 }
 
 #[tauri::command]
-fn set_chat(app: AppHandle, chat: Option<ChatRef>) -> Result<Config, String> {
+fn set_chat(app: AppHandle, window: WebviewWindow, chat: Option<ChatRef>) -> Result<Config, String> {
+    require_main_window(&window)?;
     if let Some(selected) = &chat {
         if !matches!(selected.kind.as_str(), "user" | "chat" | "channel")
             || selected.id.trim().is_empty()

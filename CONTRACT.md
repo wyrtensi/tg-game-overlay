@@ -57,6 +57,15 @@ expressed as fractions of the window (see `src/core/zones.ts`).
 
 ## Commands exposed by Rust (`invoke`)
 
+Commands that write settings or secrets, or list other running windows, answer only the
+`main` window: `set_hotkey`, `set_markup_hotkey`, `set_direction_settings`,
+`set_phrase_wheel_settings`, `set_feed_settings`, `set_language`, `set_flags`,
+`upsert_profile`, `remove_profile`, `add_current_app`, `add_profile_by_exe`,
+`list_profile_candidates`, `set_chat`, `set_transport`, `set_relay_settings`,
+`tg_save_api_keys`, `tg_clear_api_keys`, `tg_login_step` and `tg_logout`. The message id
+cache (`get/set_direction_message_id`, `get/set_phrase_message_id`) answers only `telegram`,
+like the session and key commands. Any other window gets an error string.
+
 | Command | Args | Returns |
 |---|---|---|
 | `get_config` | - | `Config` |
