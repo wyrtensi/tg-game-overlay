@@ -1,4 +1,20 @@
-import { directionFallback, type DirectionMessageTransport } from "./direction-message";
+import { directionFallback, editWithVariant, type DirectionMessageTransport } from "./direction-message";
+
+const PHRASE_VARIANT_MARK = "​";
+
+/**
+ * The phrase with an invisible trailing zero-width space, used when the
+ * phrase message already shows exactly this phrase: Telegram rejects an edit
+ * that keeps the text (MESSAGE_NOT_MODIFIED), and then nobody would see the
+ * repeated phrase. phraseFromText strips the mark again.
+ */
+export function phraseVariant(text: string): string {
+  return `${text}${PHRASE_VARIANT_MARK}`;
+}
+
+export function phraseFromText(text: string): string {
+  return text.replace(/​+$/, "");
+}
 
 export interface PhraseDispatchTransport extends DirectionMessageTransport {
   getMessageId(): Promise<number | undefined>;
@@ -13,13 +29,11 @@ export class PhraseDispatcher {
       const previousId = await transport.getMessageId();
       if (previousId !== undefined) {
         try {
-          const edited = await transport.edit(previousId, text);
+          const edited = await editWithVariant(transport, previousId, text, phraseVariant(text));
           await transport.setMessageId(edited.id);
           return { messageId: edited.id, created: false };
         } catch (error) {
-          const code = transport.errorCode(error);
-          if (code === "MESSAGE_NOT_MODIFIED") return { messageId: previousId, created: false };
-          if (directionFallback(code) !== "send-new") throw error;
+          if (directionFallback(transport.errorCode(error)) !== "send-new") throw error;
         }
       }
       const sent = await transport.send(text);

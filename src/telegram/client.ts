@@ -19,7 +19,7 @@ import {
   telegramErrorCode,
 } from "./direction-message";
 import { DirectionDispatcher } from "./direction-dispatcher";
-import { PhraseDispatcher } from "./phrase-dispatcher";
+import { PhraseDispatcher, phraseFromText } from "./phrase-dispatcher";
 import { toChatRefs, type DialogLike } from "./dialogs";
 import { mergeChatRefs, remoteChatRefs, type SearchResultLike } from "./remote-dialogs";
 import { mapLoginError } from "./errors";
@@ -826,7 +826,7 @@ export class TelegramWorker {
       payload: {
         messageId: String(message.id),
         author,
-        phrase: message.message ?? "",
+        phrase: phraseFromText(message.message ?? ""),
         at: Date.now(),
         outgoing: message.out === true,
       },

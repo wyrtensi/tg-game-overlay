@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { PhraseDispatcher } from "./phrase-dispatcher";
+import { PhraseDispatcher, phraseFromText, phraseVariant } from "./phrase-dispatcher";
 
 describe("PhraseDispatcher", () => {
   test("creates one phrase message and edits it for the next selection", async () => {
@@ -20,6 +20,30 @@ describe("PhraseDispatcher", () => {
 
     expect(sent).toEqual(["Нужна помощь"]);
     expect(edited).toEqual([{ id: 91, text: "Вперёд" }]);
+  });
+
+  test("repeats the current phrase through an invisible variant", async () => {
+    const dispatcher = new PhraseDispatcher();
+    let shown = "Вперёд";
+    const edits: string[] = [];
+    const transport = {
+      getMessageId: async () => 91,
+      setMessageId: async () => {},
+      edit: async (id: number, text: string) => {
+        if (text === shown) throw new Error("MESSAGE_NOT_MODIFIED");
+        edits.push(text);
+        shown = text;
+        return { id };
+      },
+      send: async () => ({ id: 92 }),
+      errorCode: (error: unknown) => error instanceof Error ? error.message : "UNKNOWN",
+    };
+
+    await dispatcher.dispatch("Вперёд", transport);
+    await dispatcher.dispatch("Вперёд", transport);
+
+    expect(edits).toEqual([phraseVariant("Вперёд"), "Вперёд"]);
+    expect(edits.map(phraseFromText)).toEqual(["Вперёд", "Вперёд"]);
   });
 
   test("treats an unchanged phrase edit as a successful update", async () => {
