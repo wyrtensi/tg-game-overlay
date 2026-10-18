@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { DirectionSignalStore } from "./direction-signal";
+import { DirectionSignalStore, MAX_DIRECTION_SIGNALS } from "./direction-signal";
 
 describe("DirectionSignalStore", () => {
   test("replaces a signal when Telegram edits the same message", () => {
@@ -58,5 +58,15 @@ describe("DirectionSignalStore", () => {
 
     expect(store.entries()).toEqual([]);
     expect(store.current()).toBeNull();
+  });
+
+  test("stays bounded however many message ids arrive, keeping the newest", () => {
+    const store = new DirectionSignalStore();
+    for (let index = 0; index < 1000; index += 1) {
+      store.upsert({ messageId: `spam-${index}`, direction: "up", at: index });
+    }
+
+    expect(store.entries()).toHaveLength(MAX_DIRECTION_SIGNALS);
+    expect(store.current()).toMatchObject({ messageId: "spam-999" });
   });
 });

@@ -29,14 +29,25 @@ export class Feed {
 
   constructor(private readonly options: FeedOptions) {}
 
+  /**
+   * Keeps the buffer ordered by `at`, stable for equal times. Messages do not
+   * always arrive in order: a live message can land while history is still
+   * loading, and a backfill can bring an older message after newer ones.
+   */
   add(message: ChatMessage, mode: FeedMode): void {
-    const existing = this.messages.find((stored) => stored.id === message.id);
-    if (existing) {
+    const index = this.messages.findIndex((stored) => stored.id === message.id);
+    if (index >= 0) {
+      const existing = this.messages[index];
+      const moved = existing.at !== message.at;
       Object.assign(existing, message);
+      if (moved) {
+        this.messages.splice(index, 1);
+        this.insertSorted(existing);
+      }
       return;
     }
 
-    this.messages.push({
+    this.insertSorted({
       ...message,
       missed: mode === "hidden",
       read: mode !== "hidden",
@@ -45,6 +56,12 @@ export class Feed {
     if (this.messages.length > this.options.historyLimit) {
       this.messages.splice(0, this.messages.length - this.options.historyLimit);
     }
+  }
+
+  private insertSorted(message: StoredMessage): void {
+    let index = this.messages.length;
+    while (index > 0 && this.messages[index - 1].at > message.at) index -= 1;
+    this.messages.splice(index, 0, message);
   }
 
   clear(): void {

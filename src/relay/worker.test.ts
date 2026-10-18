@@ -6,6 +6,8 @@ import { MAX_RELAY_IMAGE_BYTES, RelayWorker, settingsKey, type RelayConnectionLi
 
 const SETTINGS = { url: "203.0.113.10:8790", room: "Squad", displayName: "Alex" };
 const CREDS = { accessKey: "access-key-0123456789", password: "secret" };
+/** The worker's clock; server times in these tests sit just before it. */
+const NOW = Date.UTC(2026, 0, 1);
 
 class FakeConnection implements RelayConnectionLike {
   connected = false;
@@ -30,7 +32,7 @@ class FakeConnection implements RelayConnectionLike {
 
   async send(data: string): Promise<StoredMessage> {
     this.sent.push(data);
-    const stored = { seq: (this.seq += 1), at: 1000 + this.seq, data };
+    const stored = { seq: (this.seq += 1), at: NOW - 1000 + this.seq, data };
     this.options.onMessage(stored, false);
     return stored;
   }
@@ -79,7 +81,7 @@ async function setup(config: RelayWorkerConfig = { transport: "relay", relay: SE
       return connection;
     },
     newId: () => `id-${(counter += 1)}`,
-    now: () => 5,
+    now: () => NOW,
   });
   await worker.start();
   const emit = (event: string, payload: unknown = {}) => listeners.get(event)?.(payload);
@@ -130,15 +132,15 @@ describe("RelayWorker", () => {
     const { calls, connections, keys } = await setup();
     const encrypt = (envelope: Envelope) => encryptEnvelope(keys(), envelope);
     connections[0].goOnline([
-      { seq: 1, at: 100, data: await encrypt({ v: 1, id: "a", author: "Sam", at: 1, t: "text", text: "hello" }) },
-      { seq: 2, at: 101, data: await encrypt({ v: 1, id: "b", author: "Alex", sid: "me", at: 2, t: "text", text: "mine" }) },
-      { seq: 3, at: 102, data: await encrypt({ v: 1, id: "c", author: "Sam", at: 3, t: "direction", direction: "up" }) },
-      { seq: 4, at: 103, data: "garbage" },
+      { seq: 1, at: NOW - 900, data: await encrypt({ v: 1, id: "a", author: "Sam", at: 1, t: "text", text: "hello" }) },
+      { seq: 2, at: NOW - 899, data: await encrypt({ v: 1, id: "b", author: "Alex", sid: "me", at: 2, t: "text", text: "mine" }) },
+      { seq: 3, at: NOW - 898, data: await encrypt({ v: 1, id: "c", author: "Sam", at: NOW, t: "direction", direction: "up" }) },
+      { seq: 4, at: NOW - 897, data: "garbage" },
     ]);
     await vi.waitFor(() => expect(pushed(calls)).toHaveLength(2));
     expect(pushed(calls)).toEqual([
-      { id: "a", author: "Sam", text: "hello", at: 100 },
-      { id: "b", author: "Alex", text: "mine", at: 101, outgoing: true },
+      { id: "a", author: "Sam", text: "hello", at: NOW - 900 },
+      { id: "b", author: "Alex", text: "mine", at: NOW - 899, outgoing: true },
     ]);
     expect(calls.some((call) => call.command === "tg_direction")).toBe(false);
   });
@@ -160,7 +162,7 @@ describe("RelayWorker", () => {
     emit("tg:send", { requestId: "r1", text: "привет" });
     await vi.waitFor(() => expect(calls.some((call) => call.command === "tg_send_result")).toBe(true));
     expect(atob(connections[0].sent[0])).not.toContain("привет");
-    expect(pushed(calls)).toEqual([{ id: "id-1", author: "Alex", text: "привет", at: 1001, outgoing: true }]);
+    expect(pushed(calls)).toEqual([{ id: "id-1", author: "Alex", text: "привет", at: NOW - 999, outgoing: true }]);
     expect(calls.find((call) => call.command === "tg_send_result")?.args?.result).toEqual({
       requestId: "r1", kind: "text", ok: true, messageId: "id-1",
     });
@@ -174,6 +176,28 @@ describe("RelayWorker", () => {
     expect(calls.find((call) => call.command === "tg_direction")?.args?.payload).toMatchObject({
       messageId: "id-1", author: "Alex", direction: "left", outgoing: true,
     });
+  });
+
+  it("bounds what a room member or the server sends", async () => {
+    const { calls, connections, keys } = await setup();
+    const encrypt = (envelope: Envelope) => encryptEnvelope(keys(), envelope);
+    const live = (seq: number, at: number, envelope: Envelope) => encrypt(envelope)
+      .then((data) => connections[0].options.onMessage({ seq, at, data }, false));
+    connections[0].goOnline();
+    await live(1, 1e300, { v: 1, id: "t", author: "Sam", at: NOW, t: "text", text: "x".repeat(5000) });
+    await live(2, NOW, { v: 1, id: "p", author: "Sam", at: NOW, t: "phrase", phrase: "y".repeat(500) });
+    await live(3, NOW, { v: 1, id: "old", author: "Sam", at: NOW - 3 * 60_000, t: "direction", direction: "up" });
+    await live(4, NOW, { v: 1, id: "late", author: "Sam", at: NOW - 3 * 60_000, t: "phrase", phrase: "go" });
+    await vi.waitFor(() => expect(calls.some((call) => call.command === "tg_phrase")).toBe(true));
+    await flush();
+
+    const text = pushed(calls).find((message) => message.id === "t");
+    expect(text?.at).toBe(NOW);
+    expect((text?.text as string).length).toBe(4096);
+    const phrases = calls.filter((call) => call.command === "tg_phrase").map((call) => call.args?.payload as { messageId: string; phrase: string });
+    expect(phrases.map((payload) => payload.messageId)).toEqual(["p"]);
+    expect(phrases[0].phrase.length).toBe(160);
+    expect(calls.some((call) => call.command === "tg_direction")).toBe(false);
   });
 
   it("reports a failed send while offline", async () => {
@@ -204,6 +228,61 @@ describe("RelayWorker", () => {
     expect(pushed(calls).find((message) => message.media)?.media).toMatchObject({ kind: "webp", mimeType: "image/webp" });
   });
 
+  it("refuses TGS stickers over 64 KiB, from the server and from the cache", async () => {
+    const { calls, connections, keys, store } = await setup();
+    const encrypt = (envelope: Envelope) => encryptEnvelope(keys(), envelope);
+    const big = new Uint8Array(64 * 1024 + 1);
+    const bigId = await sha256Hex(big);
+    connections[0].stickers.set(bigId, { id: bigId, kind: "tgs", b64: bytesToBase64(big) });
+    const cachedId = "c".repeat(64);
+    store.entries.set(cachedId, { id: cachedId, kind: "tgs", b64: bytesToBase64(big), lastUsedAt: 0 });
+    const small = new Uint8Array(64 * 1024);
+    const smallId = await sha256Hex(small);
+    connections[0].stickers.set(smallId, { id: smallId, kind: "tgs", b64: bytesToBase64(small) });
+    connections[0].goOnline();
+    for (const [index, id] of [bigId, cachedId, smallId].entries()) {
+      connections[0].options.onMessage({
+        seq: index + 1,
+        at: 100 + index,
+        data: await encrypt({ v: 1, id: `s${index}`, author: "Sam", at: 1, t: "sticker", sticker: { id, kind: "tgs" } }),
+      }, false);
+    }
+    await vi.waitFor(() => expect(pushed(calls).some((message) => message.id === "s2" && message.media)).toBe(true));
+    expect(pushed(calls).filter((message) => message.media).map((message) => message.id)).toEqual(["s2"]);
+    expect(store.entries.has(bigId)).toBe(false);
+  });
+
+  it("sends each sticker preview over IPC once", async () => {
+    const { calls, connections, emit, store } = await setup();
+    const ids: string[] = [];
+    for (let index = 0; index < 40; index += 1) {
+      const bytes = new Uint8Array([index, 1, 2, 3]);
+      const id = await sha256Hex(bytes);
+      ids.push(id);
+      if (index < 5) store.entries.set(id, { id, kind: "webp", b64: bytesToBase64(bytes), lastUsedAt: 0 });
+      else connections[0].stickers.set(id, { id, kind: "webp", b64: bytesToBase64(bytes) });
+    }
+    connections[0].stickerIndex = async () => ({
+      version: "v",
+      packs: [{ id: "p", title: "Pack", stickers: ids.map((id) => ({ id, kind: "webp" as const, size: 4 })) }],
+    });
+    connections[0].goOnline();
+    emit("tg:stickers_request", { refresh: false });
+    const payloads = () => calls.filter((call) => call.command === "tg_stickers").map((call) => call.args?.payload as {
+      phase: string;
+      packs?: { stickers: { fileId: string; dataUrl?: string }[] }[];
+      previews?: { fileId: string; dataUrl: string }[];
+    });
+    await vi.waitFor(() => expect(payloads()[payloads().length - 1]?.phase).toBe("complete"));
+
+    const [metadata, ...updates] = payloads();
+    expect(metadata.phase).toBe("metadata");
+    expect(metadata.packs?.[0].stickers.filter((sticker) => sticker.dataUrl)).toHaveLength(5);
+    expect(updates.every((update) => update.packs === undefined)).toBe(true);
+    const streamed = updates.flatMap((update) => update.previews ?? []).map((preview) => preview.fileId);
+    expect(streamed.sort()).toEqual(ids.slice(5).sort());
+  });
+
   it("refuses images over the relay limit", async () => {
     const { calls, connections, emit } = await setup();
     connections[0].goOnline();
@@ -211,6 +290,37 @@ describe("RelayWorker", () => {
     emit("tg:send_file", { requestId: "f1", dataUrl: `data:image/png;base64,${big}` });
     await vi.waitFor(() => expect(calls.some((call) => call.command === "tg_send_result")).toBe(true));
     expect(connections[0].sent).toHaveLength(0);
+  });
+
+  it("reconnects once per relay settings save, with the reloaded secrets", async () => {
+    const { calls, connections, emit, setConfig } = await setup();
+    const moved = { ...SETTINGS, url: "203.0.113.20:8790" };
+    // set_relay_settings: config:changed first (old secrets still loaded), then relay:settings_changed.
+    setConfig({ transport: "relay", relay: moved });
+    await flush();
+    expect(calls.some((call) => call.command === "reset_overlay_feed")).toBe(false);
+    emit("relay:settings_changed");
+    await vi.waitFor(() => expect(connections).toHaveLength(2));
+    await flush();
+    expect(connections).toHaveLength(2);
+    expect(connections[1].options.url).toBe("ws://203.0.113.20:8790/ws");
+    expect(calls.filter((call) => call.command === "reset_overlay_feed")).toHaveLength(1);
+  });
+
+  it("keeps the session when a save does not change the room", async () => {
+    const { connections, emit, setConfig } = await setup();
+    setConfig({ transport: "relay", relay: { ...SETTINGS, displayName: "Sam" } });
+    emit("relay:settings_changed");
+    await flush();
+    await flush();
+    expect(connections).toHaveLength(1);
+    expect(connections[0].stopped).toBe(false);
+  });
+
+  it("connects when the transport switches to the relay", async () => {
+    const { connections, setConfig } = await setup({ transport: "telegram", relay: SETTINGS });
+    setConfig({ transport: "relay", relay: SETTINGS });
+    await vi.waitFor(() => expect(connections).toHaveLength(1));
   });
 
   it("disconnects when the transport switches back to Telegram", async () => {

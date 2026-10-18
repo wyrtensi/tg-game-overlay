@@ -14,17 +14,28 @@ import { fadeDelayMs } from "./fade";
 import { planMessageSync } from "./feed-diff";
 import { messageAreaRect, resolveInputPlacement, stickerPanelHeight } from "./layout";
 import { MarkupSession } from "./markup-session";
-import { fitMediaBox, mediaElementKind, photoPreviewMaxSize, type MediaKind } from "./media";
+import { fitMediaBox, mediaElementKind, photoBoxes, type MediaKind } from "./media";
 import { mediaFailureLabel } from "./media-state";
 import { MediaStore } from "./media-store";
 import { playbackDeadline, remainingPlaybackMs } from "./sticker-playback";
 import { isNearBottom } from "./scroll";
-import { filterStickers, pushRecent, type StickerPack, withRecentPack } from "./stickers";
-import { messageClassNames, messageContent } from "./message-presentation";
+import {
+  applyStickerUpdate,
+  filterStickers,
+  planStickerGrid,
+  pushRecent,
+  type StickerPack,
+  type StickerRef,
+  type StickerUpdate,
+  withRecentPack,
+} from "./stickers";
+import { messageClassNames, messageContent, messageTime, messageTimestamp } from "./message-presentation";
+import { messageChanged } from "./message-update";
 import { pickerEmptyMessage, pickerProgressMessage, type StickerPickerState } from "./sticker-picker-state";
+import { isDuplicateSend, type PendingSend } from "./send-state";
 import { DirectionSignalStore } from "./direction-signal";
 import { phraseWheelItems, wheelOrigin } from "./phrase-wheel";
-import type { SendKind, SendResult } from "../telegram/send-result";
+import type { SendResult } from "../telegram/send-result";
 import type { Direction } from "../telegram/direction-message";
 import { applyTranslations, resolveLanguage, setLocale, t } from "../i18n";
 
@@ -80,11 +91,6 @@ interface PendingAttachment {
   name: string;
 }
 
-interface PendingSend {
-  kind: SendKind;
-  text?: string;
-  stickerId?: string;
-}
 
 function loadRecentStickers(): string[] {
   try {
@@ -105,15 +111,14 @@ function saveRecentStickers(ids: string[]): void {
   }
 }
 
-/** tgs media is gzipped Lottie JSON packed into the data URL. */
+/**
+ * tgs media is gzipped Lottie JSON packed into the data URL. Inflation is
+ * capped (see tgs.ts): anything past it throws and the caller shows the
+ * normal media failure label instead of exhausting the renderer's memory.
+ */
 async function inflateTgsAnimationData(dataUrl: string): Promise<unknown> {
-  const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-
-  const { ungzip } = await import("pako");
-  return JSON.parse(ungzip(bytes, { to: "string" }));
+  const { inflateTgsDataUrl } = await import("./tgs");
+  return inflateTgsDataUrl(dataUrl);
 }
 
 interface FeedSettings {
@@ -184,6 +189,14 @@ interface PhraseWheelPayload {
 
 interface MarkupPayload {
   active: boolean;
+}
+
+/** One button of the sticker picker grid, kept so a preview update can patch it in place. */
+interface StickerGridItem {
+  fileId: string;
+  dataUrl?: string;
+  button: HTMLButtonElement;
+  lottie: AnimationItem | null;
 }
 
 /** Any element ever pushed through the feed, kept so settings changes can rebuild it. */
@@ -284,7 +297,7 @@ class OverlayApp {
   // "same id, media now attached" update can patch the existing node.
   private readonly mediaById = new MediaStore<MediaPayload>(MEDIA_MEMORY_LIMIT_BYTES);
   private readonly lottieByMessageId = new Map<string, AnimationItem>();
-  private readonly pickerLotties = new Set<AnimationItem>();
+
   private readonly videosByMessageId = new Map<string, HTMLVideoElement>();
   private readonly stickerDeadlines = new Map<string, number | null>();
   private readonly stickerPauseTimers = new Map<string, ReturnType<typeof window.setTimeout>>();
@@ -309,7 +322,16 @@ class OverlayApp {
   private recentStickerIds: string[] = loadRecentStickers();
   private selectedStickerPackId: string | null = null;
   private stickerSearchQuery = "";
-  private stickerPickerRenderVersion = 0;
+  // The picker's chrome lives as long as the page (see renderStickerPanel).
+  private readonly stickerSearchEl = document.createElement("input");
+  private readonly stickerTabsEl = document.createElement("div");
+  private readonly stickerToolsEl = document.createElement("div");
+  private readonly stickerProgressEl = document.createElement("span");
+  private readonly stickerRefreshEl = document.createElement("button");
+  private readonly stickerGridEl = document.createElement("div");
+  private readonly stickerNoResultsEl = document.createElement("div");
+  private readonly stickerGridItems: StickerGridItem[] = [];
+  private stickerTabsKey = "";
 
   start(): void {
     this.wireInput();
@@ -389,13 +411,16 @@ class OverlayApp {
       this.hotkeyWarningEl.hidden = !error;
     });
 
-    await this.safeListen<OverlayMessagePayload>("overlay:message", (payload) => {
+    await this.safeListen<OverlayMessagePayload>("overlay:message", (incoming) => {
+      const payload = { ...incoming, at: messageTimestamp(incoming.at, Date.now()) };
       const mode: FeedMode = this.kind === "active" ? "active" : this.kind === "inactive" ? "inactive" : "hidden";
       // The worker can push the same id twice: once with just text, again
       // once the media has finished downloading. Patch the existing node in
       // place rather than waiting for the normal add/remove diff, which
-      // would never notice (the id was already tracked either way).
-      const alreadyTracked = this.feedNodes.has(payload.id);
+      // would never notice (the id was already tracked either way). An
+      // unchanged re-push leaves the line alone so animations do not replay.
+      const tracked = this.feedNodes.get(payload.id);
+      const repaint = tracked !== undefined && messageChanged(tracked.message, this.mediaById.get(payload.id), payload);
       if (payload.media) this.mediaById.set(payload.id, payload.media);
 
       this.feed.add(payload, mode);
@@ -407,7 +432,7 @@ class OverlayApp {
         this.evictMedia(id);
       }
 
-      if (alreadyTracked) {
+      if (repaint) {
         this.patchMessageContent(payload);
       }
       this.render();
@@ -462,11 +487,14 @@ class OverlayApp {
       this.render();
     });
 
-    await this.safeListen<{ packs: StickerPack[]; phase?: "metadata" | "previews" | "complete"; error?: string }>("tg:stickers", (payload) => {
-      this.stickerPacks = payload.packs;
+    await this.safeListen<StickerUpdate & { phase?: "metadata" | "previews" | "complete"; error?: string }>("tg:stickers", (payload) => {
+      // Streamed previews belong to packs this page holds; after a reset
+      // there is nothing to merge them into until the picker asks again.
+      if (!payload.packs && !payload.error && !this.stickerPacksRequested) return;
+      this.stickerPacks = applyStickerUpdate(this.stickerPacks, payload);
       this.stickerPickerState = payload.error
         ? { status: "error", message: payload.error }
-        : { status: "ready", packs: payload.packs, phase: payload.phase };
+        : { status: "ready", packs: this.stickerPacks, phase: payload.phase };
       this.renderStickerPanel();
     });
 
@@ -626,6 +654,15 @@ class OverlayApp {
     this.videosByMessageId.clear();
     this.stickToBottom = true;
     this.clearPendingAttachment();
+    // A reset means another chat, transport or account: its sticker packs
+    // (and their file ids) may not exist there, so ask again on next open.
+    this.stickerPacks = [];
+    this.stickerPacksRequested = false;
+    this.stickerPickerState = { status: "idle" };
+    this.selectedStickerPackId = null;
+    this.stickerSearchQuery = "";
+    this.stickerPanelOpen = false;
+    this.renderStickerPanel();
     this.render();
   }
 
@@ -668,7 +705,7 @@ class OverlayApp {
     this.inputEl.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        this.sendMessage();
+        if (!e.repeat) this.sendMessage();
       } else if (e.key === "Escape") {
         e.preventDefault();
         this.safeInvoke("dismiss");
@@ -691,21 +728,29 @@ class OverlayApp {
 
   private sendMessage(): void {
     const text = this.inputEl.value.trim();
+    const attachment = this.pendingAttachment?.dataUrl;
+    if (!attachment && !text) return;
+    const candidate = attachment ? { kind: "file" as const, text, attachment } : { kind: "text" as const, text };
+    const now = Date.now();
+    if (isDuplicateSend(this.pendingSends.values(), candidate, now)) return;
+
     const requestId = this.newRequestId();
     this.clearSendError();
-
-    if (this.pendingAttachment) {
-      this.pendingSends.set(requestId, { kind: "file", text });
-      this.safeInvoke("send_file", {
-        requestId,
-        dataUrl: this.pendingAttachment.dataUrl,
-        caption: text || undefined,
-      });
+    this.pendingSends.set(requestId, { ...candidate, startedAt: now });
+    if (attachment) {
+      this.invokeSend(requestId, "send_file", { requestId, dataUrl: attachment, caption: text || undefined });
     } else {
-      if (!text) return;
-      this.pendingSends.set(requestId, { kind: "text", text });
-      this.safeInvoke("send_message", { requestId, text });
+      this.invokeSend(requestId, "send_message", { requestId, text });
     }
+  }
+
+  /** Like safeInvoke, but a rejected send stops counting as pending and says so. */
+  private invokeSend(requestId: string, cmd: string, args: Record<string, unknown>): void {
+    if (!isTauri()) return;
+    void invoke(cmd, args).catch((err: unknown) => {
+      if (!this.pendingSends.delete(requestId)) return;
+      this.showSendError(typeof err === "string" ? err : "Telegram не подтвердил отправку");
+    });
   }
 
   private handlePaste(e: ClipboardEvent): void {
@@ -802,50 +847,51 @@ class OverlayApp {
       // for the next render tick.
       this.render();
     });
+
+    this.stickerSearchEl.type = "search";
+    this.stickerSearchEl.className = "sticker-search";
+    this.stickerSearchEl.addEventListener("input", () => {
+      this.stickerSearchQuery = this.stickerSearchEl.value;
+      this.renderStickerPanel();
+    });
+    this.stickerTabsEl.className = "sticker-tabs";
+    this.stickerTabsEl.setAttribute("role", "tablist");
+    this.stickerToolsEl.className = "sticker-panel__tools";
+    this.stickerProgressEl.className = "sticker-panel__progress";
+    this.stickerRefreshEl.type = "button";
+    this.stickerRefreshEl.className = "sticker-panel__refresh";
+    this.stickerRefreshEl.addEventListener("click", () => {
+      this.stickerPacksRequested = true;
+      this.safeInvoke("tg_request_stickers", { refresh: true });
+    });
+    this.stickerToolsEl.append(this.stickerProgressEl, this.stickerRefreshEl);
+    this.stickerGridEl.className = "sticker-grid";
+    this.stickerNoResultsEl.className = "sticker-panel__empty";
   }
 
-  /** Rebuilds the picker's contents; visibility itself is driven every tick by renderInputZone. */
-  private renderStickerPanel(focusSearch = false): void {
+  /**
+   * Updates the picker in place; visibility itself is driven every tick by
+   * renderInputZone. tg:stickers batches arrive while the user searches, so
+   * the search field, tabs and tools persist (focus, caret and the panel's
+   * scroll position survive) and the grid only swaps stickers whose preview
+   * changed.
+   */
+  private renderStickerPanel(): void {
     if (!this.stickerPanelOpen) {
-      this.destroyPickerLotties();
+      this.clearStickerGrid();
       return;
     }
-
-    this.stickerPickerRenderVersion += 1;
-    this.destroyPickerLotties();
-    const renderVersion = this.stickerPickerRenderVersion;
-
-    const packs = withRecentPack(this.stickerPacks, this.recentStickerIds);
-    this.stickerPanelEl.replaceChildren();
 
     const emptyMessage = pickerEmptyMessage(this.stickerPickerState);
     if (emptyMessage) {
-      const empty = document.createElement("div");
-      empty.className = "sticker-panel__empty";
-      empty.textContent = emptyMessage;
-      this.stickerPanelEl.appendChild(empty);
-      if (this.stickerPickerState.status === "error") {
-        const retry = document.createElement("button");
-        retry.type = "button";
-        retry.className = "sticker-panel__retry";
-        retry.textContent = t("Повторить");
-        retry.addEventListener("click", () => {
-          this.stickerPacksRequested = true;
-          this.stickerPickerState = { status: "loading" };
-          this.safeInvoke("tg_request_stickers");
-          this.renderStickerPanel();
-        });
-        this.stickerPanelEl.appendChild(retry);
-      }
+      this.showStickerPanelMessage(emptyMessage, this.stickerPickerState.status === "error");
       return;
     }
 
+    const packs = withRecentPack(this.stickerPacks, this.recentStickerIds);
     const availablePacks = packs.filter((pack) => pack.stickers.length > 0);
     if (availablePacks.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "sticker-panel__empty";
-      empty.textContent = t("В этих наборах пока нет превью стикеров");
-      this.stickerPanelEl.appendChild(empty);
+      this.showStickerPanelMessage(t("В этих наборах пока нет превью стикеров"), false);
       return;
     }
 
@@ -853,21 +899,69 @@ class OverlayApp {
       this.selectedStickerPackId = availablePacks[0].id;
     }
 
-    const search = document.createElement("input");
-    search.type = "search";
-    search.className = "sticker-search";
+    const search = this.stickerSearchEl;
     search.placeholder = t("Поиск стикеров");
-    search.value = this.stickerSearchQuery;
     search.setAttribute("aria-label", t("Поиск стикеров в выбранном наборе"));
-    search.addEventListener("input", () => {
-      this.stickerSearchQuery = search.value;
-      this.renderStickerPanel(true);
-    });
+    // Only a programmatic change (another tab, a reopened panel) touches the
+    // value: rewriting it while the user types would move the caret.
+    if (search.value !== this.stickerSearchQuery) search.value = this.stickerSearchQuery;
 
-    const tabs = document.createElement("div");
-    tabs.className = "sticker-tabs";
-    tabs.setAttribute("role", "tablist");
-    for (const pack of availablePacks) {
+    this.renderStickerTabs(availablePacks);
+
+    const progress = pickerProgressMessage(this.stickerPickerState);
+    this.stickerProgressEl.textContent = progress ?? "";
+    this.stickerProgressEl.hidden = !progress;
+    this.stickerRefreshEl.textContent = t("Обновить");
+
+    const selectedPack = availablePacks.find((pack) => pack.id === this.selectedStickerPackId) ?? availablePacks[0];
+    const stickers = filterStickers([selectedPack], this.stickerSearchQuery)[0]?.stickers ?? [];
+    let body: HTMLElement;
+    if (stickers.length === 0) {
+      this.clearStickerGrid();
+      this.stickerNoResultsEl.textContent = t("Ничего не найдено");
+      body = this.stickerNoResultsEl;
+    } else {
+      this.syncStickerGrid(stickers);
+      body = this.stickerGridEl;
+    }
+
+    const panel = this.stickerPanelEl;
+    const chrome = [search, this.stickerTabsEl, this.stickerToolsEl];
+    if (panel.children.length !== 4 || chrome.some((child, index) => panel.children[index] !== child)) {
+      panel.replaceChildren(...chrome, body);
+    } else if (panel.children[3] !== body) {
+      // Re-appending the search field would blur it; swap just the body.
+      panel.children[3].replaceWith(body);
+    }
+  }
+
+  private showStickerPanelMessage(message: string, retryable: boolean): void {
+    this.clearStickerGrid();
+    const empty = document.createElement("div");
+    empty.className = "sticker-panel__empty";
+    empty.textContent = message;
+    const children: HTMLElement[] = [empty];
+    if (retryable) {
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "sticker-panel__retry";
+      retry.textContent = t("Повторить");
+      retry.addEventListener("click", () => {
+        this.stickerPacksRequested = true;
+        this.stickerPickerState = { status: "loading" };
+        this.safeInvoke("tg_request_stickers");
+        this.renderStickerPanel();
+      });
+      children.push(retry);
+    }
+    this.stickerPanelEl.replaceChildren(...children);
+  }
+
+  private renderStickerTabs(packs: StickerPack[]): void {
+    const key = JSON.stringify([this.selectedStickerPackId, packs.map((pack) => [pack.id, t(pack.title)])]);
+    if (key === this.stickerTabsKey) return;
+    this.stickerTabsKey = key;
+    const tabs = packs.map((pack) => {
       const tab = document.createElement("button");
       tab.type = "button";
       tab.className = "sticker-tab";
@@ -879,88 +973,81 @@ class OverlayApp {
         this.stickerSearchQuery = "";
         this.renderStickerPanel();
       });
-      tabs.appendChild(tab);
-    }
-    this.stickerPanelEl.append(search, tabs);
-
-    const tools = document.createElement("div");
-    tools.className = "sticker-panel__tools";
-    const progress = pickerProgressMessage(this.stickerPickerState);
-    if (progress) {
-      const status = document.createElement("span");
-      status.className = "sticker-panel__progress";
-      status.textContent = progress;
-      tools.appendChild(status);
-    }
-    const refresh = document.createElement("button");
-    refresh.type = "button";
-    refresh.className = "sticker-panel__refresh";
-    refresh.textContent = t("Обновить");
-    refresh.addEventListener("click", () => {
-      this.stickerPacksRequested = true;
-      this.safeInvoke("tg_request_stickers", { refresh: true });
+      return tab;
     });
-    tools.appendChild(refresh);
-    this.stickerPanelEl.appendChild(tools);
+    this.stickerTabsEl.replaceChildren(...tabs);
+  }
 
-    const selectedPack = availablePacks.find((pack) => pack.id === this.selectedStickerPackId) ?? availablePacks[0];
-    const stickers = filterStickers([selectedPack], this.stickerSearchQuery)[0]?.stickers ?? [];
-    if (stickers.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "sticker-panel__empty";
-      empty.textContent = t("Ничего не найдено");
-      this.stickerPanelEl.appendChild(empty);
-      if (focusSearch) search.focus();
-      return;
+  private syncStickerGrid(stickers: StickerRef[]): void {
+    const plan = planStickerGrid(this.stickerGridItems, stickers);
+    if (plan.rebuild) {
+      this.clearStickerGrid();
+      for (const sticker of stickers) this.stickerGridItems.push(this.buildStickerItem(sticker));
+      this.stickerGridEl.replaceChildren(...this.stickerGridItems.map((item) => item.button));
+    } else {
+      const changed = new Set(plan.changed);
+      this.stickerGridItems.forEach((item, index) => {
+        if (!changed.has(item.fileId)) return;
+        const next = this.buildStickerItem(stickers[index]);
+        item.lottie?.destroy();
+        item.button.replaceWith(next.button);
+        this.stickerGridItems[index] = next;
+      });
     }
+    stickers.forEach((sticker, index) => {
+      this.stickerGridItems[index].button.disabled = sticker.documentReady === false;
+    });
+  }
 
-    const grid = document.createElement("div");
-    grid.className = "sticker-grid";
-    for (const sticker of stickers) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "sticker-item";
-      button.disabled = sticker.documentReady === false;
-      if (sticker.dataUrl) {
-        if (sticker.dataUrl.startsWith("data:video/")) {
-          const video = document.createElement("video");
-          video.src = sticker.dataUrl;
-          video.muted = true;
-          video.loop = true;
-          video.playsInline = true;
-          video.autoplay = true;
-          video.setAttribute("aria-label", sticker.emoji ?? t("Анимированный стикер"));
-          button.appendChild(video);
-        } else if (sticker.dataUrl.startsWith("data:application/x-tgsticker")) {
-          const animation = document.createElement("span");
-          animation.className = "sticker-item__animation";
-          animation.setAttribute("aria-label", sticker.emoji ?? t("Анимированный стикер"));
-          button.appendChild(animation);
-          void this.mountPickerLottie(animation, sticker.dataUrl, renderVersion);
-        } else {
-          const img = document.createElement("img");
-          img.src = sticker.dataUrl;
-          img.alt = sticker.emoji ?? "";
-          button.appendChild(img);
-        }
+  private buildStickerItem(sticker: StickerRef): StickerGridItem {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "sticker-item";
+    const item: StickerGridItem = { fileId: sticker.fileId, dataUrl: sticker.dataUrl, button, lottie: null };
+    if (sticker.dataUrl) {
+      if (sticker.dataUrl.startsWith("data:video/")) {
+        const video = document.createElement("video");
+        video.src = sticker.dataUrl;
+        video.muted = true;
+        video.loop = true;
+        video.playsInline = true;
+        video.autoplay = true;
+        video.setAttribute("aria-label", sticker.emoji ?? t("Анимированный стикер"));
+        button.appendChild(video);
+      } else if (sticker.dataUrl.startsWith("data:application/x-tgsticker")) {
+        const animation = document.createElement("span");
+        animation.className = "sticker-item__animation";
+        animation.setAttribute("aria-label", sticker.emoji ?? t("Анимированный стикер"));
+        button.appendChild(animation);
+        void this.mountPickerLottie(item, animation, sticker.dataUrl);
       } else {
-        const fallback = document.createElement("span");
-        fallback.className = "sticker-item__fallback";
-        fallback.textContent = sticker.emoji ?? "◌";
-        button.appendChild(fallback);
+        const img = document.createElement("img");
+        img.src = sticker.dataUrl;
+        img.alt = sticker.emoji ?? "";
+        button.appendChild(img);
       }
-      button.addEventListener("click", () => this.sendSticker(sticker.fileId));
-      grid.appendChild(button);
+    } else {
+      const fallback = document.createElement("span");
+      fallback.className = "sticker-item__fallback";
+      fallback.textContent = sticker.emoji ?? "◌";
+      button.appendChild(fallback);
     }
-    this.stickerPanelEl.appendChild(grid);
-    if (focusSearch) search.focus();
+    button.addEventListener("click", () => this.sendSticker(sticker.fileId));
+    return item;
+  }
+
+  /** Empties the grid and stops its animations (panel closed, another pack, a message instead). */
+  private clearStickerGrid(): void {
+    for (const item of this.stickerGridItems) item.lottie?.destroy();
+    this.stickerGridItems.length = 0;
+    this.stickerGridEl.replaceChildren();
   }
 
   private sendSticker(fileId: string): void {
     const requestId = this.newRequestId();
     this.clearSendError();
-    this.pendingSends.set(requestId, { kind: "sticker", stickerId: fileId });
-    this.safeInvoke("send_sticker", { requestId, fileId });
+    this.pendingSends.set(requestId, { kind: "sticker", stickerId: fileId, startedAt: Date.now() });
+    this.invokeSend(requestId, "send_sticker", { requestId, fileId });
   }
 
   // -- Markup mode --
@@ -1056,7 +1143,10 @@ class OverlayApp {
     // Freeze/resume the passive fade exactly at the mode boundary, not every
     // tick: entering active means "expiry paused", leaving it means the
     // fade countdown resumes from the message's real current age.
-    if (enteringActive || leavingActive) this.retimeFeedFades();
+    if (enteringActive || leavingActive) {
+      this.retimeFeedFades();
+      this.setPhotoPreviewsFocusable(isActive);
+    }
 
     this.feedZoneEl.hidden = false;
     this.inputZoneEl.hidden = false;
@@ -1064,6 +1154,8 @@ class OverlayApp {
     const area = messageAreaRect(this.settings.inactiveZone, this.settings.activeZone, isActive);
     positionZone(this.feedZoneEl, area);
     this.feedEl.classList.toggle("feed--scrollable", isActive);
+    // Mode-dependent media styling (photo preview size and affordance).
+    this.feedEl.classList.toggle("feed--active", isActive);
     this.feedZoneEl.style.setProperty(
       "--overlay-backdrop",
       backdropColor(isActive ? Math.max(this.settings.opacity, 0.7) : this.settings.opacity),
@@ -1187,6 +1279,13 @@ class OverlayApp {
     }
   }
 
+  /** Photo previews open only in the active chat, so only there can the keyboard reach them. */
+  private setPhotoPreviewsFocusable(focusable: boolean): void {
+    for (const preview of this.feedEl.querySelectorAll<HTMLElement>(".msg-media--photo-preview")) {
+      preview.tabIndex = focusable ? 0 : -1;
+    }
+  }
+
   private renderMarkup(session: MarkupSession): void {
     this.markupEl.hidden = false;
     const snapshot = session.snapshot();
@@ -1267,11 +1366,13 @@ class OverlayApp {
   }
 
   private buildTimeEl(at: number): HTMLTimeElement {
-    const date = new Date(at);
     const time = document.createElement("time");
     time.className = "msg-time";
-    time.dateTime = date.toISOString();
-    time.textContent = MESSAGE_TIME_FORMATTER.format(date);
+    const formatted = messageTime(at, MESSAGE_TIME_FORMATTER);
+    if (formatted) {
+      time.dateTime = formatted.dateTime;
+      time.textContent = formatted.label;
+    }
     return time;
   }
 
@@ -1284,27 +1385,33 @@ class OverlayApp {
 
   /** Reserves the final box size up front (see media.ts fitMediaBox) so nothing shifts once it loads. */
   private buildMediaEl(messageId: string, media: MediaPayload): HTMLElement {
-    const maxSizePx = media.kind === "photo"
-      ? photoPreviewMaxSize(this.kind === "active" ? "active" : "inactive", this.settings.fontScale)
-      : BASE_STICKER_MAX_PX * this.settings.fontScale;
-    const box = fitMediaBox(media.width, media.height, maxSizePx);
-
     const container = document.createElement("div");
     container.className = "msg-media";
-    container.style.width = `${box.width}px`;
-    container.style.height = `${box.height}px`;
-    if (media.kind === "photo" && this.kind === "active") {
+    if (media.kind === "photo") {
+      // A photo that arrives in the passive feed stays on screen when the
+      // chat opens, so it gets both sizes and the open handler right away;
+      // CSS (.feed--active) picks the size, the handler acts only when active.
+      const boxes = photoBoxes(media.width, media.height, this.settings.fontScale);
+      container.style.setProperty("--photo-active-width", `${boxes.active.width}px`);
+      container.style.setProperty("--photo-active-height", `${boxes.active.height}px`);
+      container.style.setProperty("--photo-inactive-width", `${boxes.inactive.width}px`);
+      container.style.setProperty("--photo-inactive-height", `${boxes.inactive.height}px`);
       container.classList.add("msg-media--photo-preview");
-      container.tabIndex = 0;
+      container.tabIndex = this.kind === "active" ? 0 : -1;
       container.setAttribute("role", "button");
       container.setAttribute("aria-label", t("Открыть изображение"));
-      container.addEventListener("click", () => this.openPhoto(media));
-      container.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          this.openPhoto(media);
-        }
+      container.addEventListener("click", () => {
+        if (this.kind === "active") this.openPhoto(media);
       });
+      container.addEventListener("keydown", (event) => {
+        if (this.kind !== "active" || (event.key !== "Enter" && event.key !== " ")) return;
+        event.preventDefault();
+        this.openPhoto(media);
+      });
+    } else {
+      const box = fitMediaBox(media.width, media.height, BASE_STICKER_MAX_PX * this.settings.fontScale);
+      container.style.width = `${box.width}px`;
+      container.style.height = `${box.height}px`;
     }
 
     const kind = mediaElementKind(media.kind, media.mimeType);
@@ -1359,31 +1466,27 @@ class OverlayApp {
     }
   }
 
-  private async mountPickerLottie(container: HTMLElement, dataUrl: string, renderVersion: number): Promise<void> {
+  private async mountPickerLottie(item: StickerGridItem, container: HTMLElement, dataUrl: string): Promise<void> {
+    // The grid may have dropped or replaced this sticker while it loaded.
+    const current = () => container.isConnected && this.stickerGridItems.includes(item);
     try {
       const [animationData, { default: lottie }] = await Promise.all([
         inflateTgsAnimationData(dataUrl),
         import("lottie-web/build/player/lottie_light"),
       ]);
-      if (!container.isConnected || renderVersion !== this.stickerPickerRenderVersion) return;
+      if (!current()) return;
 
-      const instance = lottie.loadAnimation({
+      item.lottie = lottie.loadAnimation({
         container,
         renderer: "svg",
         loop: true,
         autoplay: true,
         animationData,
       });
-      this.pickerLotties.add(instance);
     } catch {
-      if (!container.isConnected || renderVersion !== this.stickerPickerRenderVersion) return;
+      if (!current()) return;
       container.textContent = "◌";
     }
-  }
-
-  private destroyPickerLotties(): void {
-    for (const animation of this.pickerLotties) animation.destroy();
-    this.pickerLotties.clear();
   }
 
   private renderMediaFailure(container: HTMLElement, kind: MediaKind, messageId: string): void {

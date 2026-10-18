@@ -108,4 +108,22 @@ describe("Feed", () => {
     expect(feed.visible("active", 2000)).toEqual([]);
     expect(feed.unreadCount()).toBe(0);
   });
+
+  test("keeps messages in time order when they arrive out of order", () => {
+    feed.add({ id: "live", author: "Stas", text: "live", at: 3000 }, "active");
+    feed.add({ id: "h1", author: "Stas", text: "history 1", at: 1000 }, "active");
+    feed.add({ id: "h2", author: "Stas", text: "history 2", at: 2000 }, "active");
+    feed.add({ id: "same", author: "Stas", text: "same second", at: 3000 }, "active");
+
+    expect(textsOf(feed, "active", 3000)).toEqual(["history 1", "history 2", "live", "same second"]);
+  });
+
+  test("drops the oldest message, not the latest arrival, past the history limit", () => {
+    for (let index = 1; index <= 5; index += 1) {
+      feed.add({ id: String(index), author: "Stas", text: `m${index}`, at: index * 1000 + 1000 }, "active");
+    }
+    feed.add({ id: "old", author: "Stas", text: "backfilled", at: 500 }, "active");
+
+    expect(textsOf(feed, "active", 7000)).toEqual(["m1", "m2", "m3", "m4", "m5"]);
+  });
 });

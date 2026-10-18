@@ -29,6 +29,37 @@ export function directionEmoji(direction: Direction): string {
   return DIRECTION_EMOJI[direction];
 }
 
+/**
+ * The same arrow with the emoji variation selector toggled. Telegram answers
+ * MESSAGE_NOT_MODIFIED to an edit that keeps the text, so repeating the
+ * current direction would reach nobody; the variant looks the same and
+ * directionFromText reads both.
+ */
+export function alternateDirectionText(text: string): string {
+  return text.includes("️") ? text.replace(/️/g, "") : `${text}️`;
+}
+
+/** Edits to `text`, or to `alternate` when the message already shows `text`. */
+export async function editWithVariant(
+  transport: Pick<DirectionMessageTransport, "edit" | "errorCode">,
+  messageId: number,
+  text: string,
+  alternate: string,
+): Promise<{ id: number }> {
+  try {
+    return await transport.edit(messageId, text);
+  } catch (error) {
+    if (transport.errorCode(error) !== "MESSAGE_NOT_MODIFIED") throw error;
+  }
+  try {
+    return await transport.edit(messageId, alternate);
+  } catch (error) {
+    // Telegram normalized the variant away; the message is current either way.
+    if (transport.errorCode(error) === "MESSAGE_NOT_MODIFIED") return { id: messageId };
+    throw error;
+  }
+}
+
 export function directionFromText(text: string): Direction | null {
   const normalized = text.replace(/\uFE0F/g, "");
   for (const [direction, emoji] of Object.entries(DIRECTION_EMOJI) as Array<[Direction, string]>) {
@@ -61,12 +92,10 @@ export async function sendOrEditDirection(
   const emoji = directionEmoji(request.direction);
   if (request.messageId !== undefined) {
     try {
-      const edited = await transport.edit(request.messageId, emoji);
+      const edited = await editWithVariant(transport, request.messageId, emoji, alternateDirectionText(emoji));
       return { messageId: edited.id, created: false };
     } catch (error) {
-      const code = transport.errorCode(error);
-      if (code === "MESSAGE_NOT_MODIFIED") return { messageId: request.messageId, created: false };
-      if (directionFallback(code) !== "send-new") throw error;
+      if (directionFallback(transport.errorCode(error)) !== "send-new") throw error;
     }
   }
 

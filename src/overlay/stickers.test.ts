@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { filterStickers, pushRecent, withRecentPack } from "./stickers";
+import { applyStickerUpdate, filterStickers, planStickerGrid, pushRecent, withRecentPack } from "./stickers";
 
 describe("pushRecent", () => {
   test("adds a fresh sticker to the front", () => {
@@ -73,6 +73,39 @@ describe("withRecentPack", () => {
 
     expect(result.map((pack) => pack.id)).toEqual(["recent", "favorites", "pack1"]);
     expect(result[0].stickers.map((sticker) => sticker.fileId)).toEqual(["local", "r1", "r2"]);
+  });
+});
+
+describe("applyStickerUpdate", () => {
+  const packs = [{ id: "p", title: "Pack", stickers: [
+    { fileId: "a", kind: "webp" as const },
+    { fileId: "b", kind: "webp" as const, dataUrl: "data:b" },
+  ] }];
+
+  test("replaces the packs when the payload carries them", () => {
+    const next = [{ id: "q", title: "Other", stickers: [] }];
+    expect(applyStickerUpdate(packs, { packs: next })).toBe(next);
+  });
+
+  test("merges streamed previews into the packs already held", () => {
+    const merged = applyStickerUpdate(packs, { previews: [{ fileId: "a", dataUrl: "data:a" }, { fileId: "zzz", dataUrl: "data:z" }] });
+    expect(merged[0].stickers.map((sticker) => sticker.dataUrl)).toEqual(["data:a", "data:b"]);
+    expect(applyStickerUpdate(packs, { previews: [] })).toBe(packs);
+  });
+});
+
+describe("planStickerGrid", () => {
+  const grid = [{ fileId: "a" }, { fileId: "b", dataUrl: "data:b" }];
+
+  test("replaces only stickers whose preview arrived", () => {
+    expect(planStickerGrid(grid, [{ fileId: "a", dataUrl: "data:a" }, { fileId: "b", dataUrl: "data:b" }]))
+      .toEqual({ rebuild: false, changed: ["a"] });
+    expect(planStickerGrid(grid, grid)).toEqual({ rebuild: false, changed: [] });
+  });
+
+  test("rebuilds for another pack, a search or a new order", () => {
+    expect(planStickerGrid(grid, [{ fileId: "b" }, { fileId: "a" }])).toEqual({ rebuild: true });
+    expect(planStickerGrid(grid, [{ fileId: "a" }])).toEqual({ rebuild: true });
   });
 });
 

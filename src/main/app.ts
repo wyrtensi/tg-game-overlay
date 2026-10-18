@@ -19,7 +19,7 @@ import {
   msToSeconds,
   secondsToMs,
 } from "./format";
-import { formatKeyCombo, validateHotkeyCombo } from "./hotkey";
+import { formatKeyCombo, hotkeyFieldKeyAction, validateHotkeyCombo } from "./hotkey";
 import { normalizePhone, validatePhone } from "./phone";
 import { normalizeProfileExecutable } from "./profile-input";
 import { profileAddIntent, selectedProfileExecutable } from "./profile-add-intent";
@@ -33,6 +33,7 @@ import { focusReadinessTarget, readinessView } from "./readiness-view";
 import type { ChatRef, Config, DirectionSettings, FeedAppearance, LoginStep, MessageLayout, PhraseWheelSettings, Profile, ProfileCandidate, ProfileMode, LanguageSetting, RelaySecretState, RelaySettings, TgStatus, Transport } from "./types";
 import { normalizeDirectionSettings, validateDirectionSettings } from "./direction-settings";
 import { normalizePhraseWheelSettings, validatePhrase } from "./phrase-wheel-settings";
+import { SerialSaver } from "./serial-save";
 import { applyTranslations, resolveLanguage, setLocale, t } from "../i18n";
 
 /**
@@ -494,8 +495,17 @@ function wireHotkeyField(field: HotkeyFieldConfig): void {
   const errorEl = byId<HTMLElement>(field.errorId);
 
   input.addEventListener("keydown", (event) => {
+    const action = hotkeyFieldKeyAction(event);
+    if (action === "navigate") return; // the browser moves focus on
     event.preventDefault();
     event.stopPropagation();
+    if (action === "cancel") {
+      input.value = field.getValue();
+      errorEl.textContent = "";
+      input.classList.remove("is-invalid");
+      return;
+    }
+    if (action === "ignore") return;
 
     const combo = formatKeyCombo(event);
     if (combo === null) return; // still only a modifier held down
@@ -606,6 +616,7 @@ function wireDirectionSettings(): void {
   for (const id of DIRECTION_INPUT_IDS) {
     const input = byId<HTMLInputElement>(id);
     input.addEventListener("keydown", (event) => {
+      if (hotkeyFieldKeyAction(event) === "navigate") return;
       event.preventDefault();
       event.stopPropagation();
       if (event.key === "Escape") {
@@ -645,6 +656,25 @@ function reportPhraseWheelError(message: string): void {
   byId<HTMLElement>("phrase-wheel-error").textContent = message;
 }
 
+/**
+ * Phrase wheel saves run in order and only the newest response is applied:
+ * a row edit saves on `change`, which fires right before a click on
+ * "Удалить" or "Добавить фразу" saves again, and an older response landing
+ * last would otherwise bring the previous list back.
+ */
+const phraseWheelSaver = new SerialSaver((settings: PhraseWheelSettings) =>
+  invokeConfig("set_phrase_wheel_settings", { settings }));
+
+/**
+ * Re-renders only the phrase rows from `phrases` (the live inputs, edited)
+ * and saves the form; the other phrase wheel fields keep what they show.
+ */
+function savePhraseList(phrases: string[]): void {
+  config = { ...config, phraseWheel: { ...config.phraseWheel, phrases } };
+  renderPhraseRows(phrases);
+  savePhraseWheelSettings();
+}
+
 function savePhraseWheelSettings(): void {
   const raw = currentPhraseWheelSettings();
   const hotkeyError = validateHotkeyCombo(raw.hotkey);
@@ -664,12 +694,15 @@ function savePhraseWheelSettings(): void {
     reportPhraseWheelError(t("Добавьте от 2 до 8 фраз"));
     return;
   }
-  void invokeConfig("set_phrase_wheel_settings", { settings })
-    .then((next) => {
+  void phraseWheelSaver.submit(settings).then((outcome) => {
+    if (outcome.status === "saved") {
       reportPhraseWheelError("");
-      applyConfig(next);
-    })
-    .catch((err) => reportPhraseWheelError(t(typeof err === "string" ? err : "Не удалось сохранить колесо фраз")));
+      applyConfig(outcome.result);
+    } else if (outcome.status === "failed") {
+      const err = outcome.error;
+      reportPhraseWheelError(t(typeof err === "string" ? err : "Не удалось сохранить колесо фраз"));
+    }
+  });
 }
 
 function renderPhraseWheelSettings(): void {
@@ -679,10 +712,13 @@ function renderPhraseWheelSettings(): void {
   const deadZone = byId<HTMLInputElement>("phrase-wheel-dead-zone");
   deadZone.value = String(settings.deadZonePx);
   byId<HTMLElement>("phrase-wheel-dead-zone-value").textContent = `${settings.deadZonePx} px`;
+  renderPhraseRows(settings.phrases);
+}
 
+function renderPhraseRows(phrases: string[]): void {
   const list = byId<HTMLElement>("phrase-wheel-phrases");
   list.innerHTML = "";
-  settings.phrases.forEach((phrase, index) => {
+  phrases.forEach((phrase, index) => {
     const row = document.createElement("div");
     row.className = "phrase-wheel-row";
     const input = document.createElement("input");
@@ -699,13 +735,11 @@ function renderPhraseWheelSettings(): void {
       button.type = "button";
       button.className = "btn btn--small";
       button.textContent = label;
-      button.disabled = index + delta < 0 || index + delta >= settings.phrases.length;
+      button.disabled = index + delta < 0 || index + delta >= phrases.length;
       button.addEventListener("click", () => {
-        const phrases = currentPhraseWheelSettings().phrases;
-        [phrases[index], phrases[index + delta]] = [phrases[index + delta], phrases[index]];
-        config = { ...config, phraseWheel: { ...settings, phrases } };
-        renderPhraseWheelSettings();
-        savePhraseWheelSettings();
+        const current = currentPhraseWheelSettings().phrases;
+        [current[index], current[index + delta]] = [current[index + delta], current[index]];
+        savePhraseList(current);
       });
       row.appendChild(button);
     };
@@ -716,39 +750,39 @@ function renderPhraseWheelSettings(): void {
     remove.type = "button";
     remove.className = "btn btn--small";
     remove.textContent = t("Удалить");
-    remove.disabled = settings.phrases.length <= 2;
+    remove.disabled = phrases.length <= 2;
     remove.addEventListener("click", () => {
-      const phrases = settings.phrases.filter((_, itemIndex) => itemIndex !== index);
-      config = { ...config, phraseWheel: { ...settings, phrases } };
-      renderPhraseWheelSettings();
-      savePhraseWheelSettings();
+      // The live inputs, not the rendered list: an unsaved edit in another row stays.
+      savePhraseList(currentPhraseWheelSettings().phrases.filter((_, itemIndex) => itemIndex !== index));
     });
     row.appendChild(remove);
     list.appendChild(row);
   });
-  byId<HTMLButtonElement>("phrase-wheel-add").disabled = settings.phrases.length >= 8;
+  byId<HTMLButtonElement>("phrase-wheel-add").disabled = phrases.length >= 8;
 }
 
 function wirePhraseWheelSettings(): void {
   byId<HTMLInputElement>("phrase-wheel-enabled").addEventListener("change", savePhraseWheelSettings);
   byId<HTMLInputElement>("phrase-wheel-dead-zone").addEventListener("change", savePhraseWheelSettings);
   byId<HTMLInputElement>("phrase-wheel-hotkey").addEventListener("keydown", (event) => {
+    const action = hotkeyFieldKeyAction(event);
+    if (action === "navigate") return;
     event.preventDefault();
     event.stopPropagation();
-    if (event.key === "Escape") {
+    if (action === "cancel") {
       renderPhraseWheelSettings();
       return;
     }
+    if (action === "ignore") return;
     const combo = formatKeyCombo(event);
     if (combo === null) return;
     byId<HTMLInputElement>("phrase-wheel-hotkey").value = combo;
     savePhraseWheelSettings();
   });
   byId<HTMLButtonElement>("phrase-wheel-add").addEventListener("click", () => {
-    if (config.phraseWheel.phrases.length >= 8) return;
-    config = { ...config, phraseWheel: { ...config.phraseWheel, phrases: [...config.phraseWheel.phrases, t("Новая фраза")] } };
-    renderPhraseWheelSettings();
-    savePhraseWheelSettings();
+    const phrases = currentPhraseWheelSettings().phrases;
+    if (phrases.length >= 8) return;
+    savePhraseList([...phrases, t("Новая фраза")]);
   });
 }
 
@@ -1495,8 +1529,11 @@ async function init(): Promise<void> {
   render();
 
   await safeListen<Config>("config:changed", (next) => {
-    if (configsEqual(config, next)) return;
-    applyConfig(next);
+    // While a phrase wheel save is in flight the page's own list is newer
+    // than the intermediate configs the earlier saves broadcast.
+    const incoming = phraseWheelSaver.busy ? { ...next, phraseWheel: config.phraseWheel } : next;
+    if (configsEqual(config, incoming)) return;
+    applyConfig(incoming);
   });
 
   await safeListen<OverlayStatePayload>("overlay:state", renderOverlayStatus);

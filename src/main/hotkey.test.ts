@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { formatKeyCombo, validateHotkeyCombo } from "./hotkey";
+import { formatKeyCombo, hotkeyFieldKeyAction, validateHotkeyCombo } from "./hotkey";
 
 describe("formatKeyCombo", () => {
   test("formats a letter key with two modifiers", () => {
@@ -92,5 +92,38 @@ describe("validateHotkeyCombo", () => {
 
   test("rejects an empty combo", () => {
     expect(validateHotkeyCombo("")).toBe("Комбинация клавиш не задана");
+  });
+});
+
+describe("hotkeyFieldKeyAction", () => {
+  const key = (code: string, modifiers: Partial<{ ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean }> = {}) => ({
+    key: code,
+    code,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    metaKey: false,
+    ...modifiers,
+  });
+
+  test("lets Tab and Shift+Tab move focus instead of becoming the hotkey", () => {
+    expect(hotkeyFieldKeyAction(key("Tab"))).toBe("navigate");
+    expect(hotkeyFieldKeyAction(key("Tab", { shiftKey: true }))).toBe("navigate");
+    expect(hotkeyFieldKeyAction(key("Tab", { ctrlKey: true }))).toBe("record");
+  });
+
+  test("cancels on Esc", () => {
+    expect(hotkeyFieldKeyAction(key("Escape"))).toBe("cancel");
+  });
+
+  test("ignores a bare Backspace or Delete", () => {
+    expect(hotkeyFieldKeyAction(key("Backspace"))).toBe("ignore");
+    expect(hotkeyFieldKeyAction(key("Delete", { shiftKey: true }))).toBe("ignore");
+    expect(hotkeyFieldKeyAction(key("Delete", { ctrlKey: true, altKey: true }))).toBe("record");
+  });
+
+  test("records ordinary keys", () => {
+    expect(hotkeyFieldKeyAction(key("KeyT"))).toBe("record");
+    expect(hotkeyFieldKeyAction(key("Enter"))).toBe("record");
   });
 });

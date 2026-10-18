@@ -329,6 +329,8 @@ export const en: Record<string, string> = {
   "Подключите Telegram и повторите": "Connect Telegram and try again",
   "Не удалось загрузить стикеры": "Could not load stickers",
   "Стикеры готовы": "Stickers ready",
+  "Telegram не принял api_id или api_hash. Проверьте свои ключи Telegram":
+    "Telegram did not accept the api_id or api_hash. Check your Telegram API keys",
   "Сначала сохраните свои api_id и api_hash в разделе «Свои ключи Telegram»":
     "First save your api_id and api_hash under “Your Telegram API keys”",
   "Не удалось определить Telegram-аккаунт": "Could not identify the Telegram account",

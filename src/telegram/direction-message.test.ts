@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  alternateDirectionText,
   directionEmoji,
   directionFallback,
   directionFromText,
@@ -51,6 +52,26 @@ describe("direction messages", () => {
     });
 
     expect(result).toEqual({ messageId: 99, created: true });
+  });
+
+  test("repeats the current arrow through its invisible variant, so others see it again", async () => {
+    const edits: string[] = [];
+    let shown = "➡️";
+    const result = await sendOrEditDirection({ direction: "right", messageId: 42 }, {
+      edit: async (id, emoji) => {
+        if (emoji === shown) throw new Error("MESSAGE_NOT_MODIFIED");
+        edits.push(emoji);
+        shown = emoji;
+        return { id };
+      },
+      send: async () => ({ id: 99 }),
+      errorCode: (error) => error instanceof Error ? error.message : "UNKNOWN",
+    });
+
+    expect(result).toEqual({ messageId: 42, created: false });
+    expect(edits).toEqual(["➡"]);
+    expect(directionFromText(edits[0])).toBe("right");
+    expect(alternateDirectionText("➡")).toBe("➡️");
   });
 
   test("keeps the cached message when Telegram says the arrow is already current", async () => {
