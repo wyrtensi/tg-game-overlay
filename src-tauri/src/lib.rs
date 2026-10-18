@@ -1080,7 +1080,7 @@ fn set_phrase_wheel_settings(
     }
     // The same hotkey kept after it failed to register at startup is retried
     // here instead of being reported as fine.
-    if settings.enabled && !app.global_shortcut().is_registered(shortcut.clone()) {
+    if settings.enabled && !app.global_shortcut().is_registered(shortcut) {
         app.global_shortcut()
             .register(shortcut)
             .map_err(|error| format!("Сочетание занято другой программой: {error}"))?;
