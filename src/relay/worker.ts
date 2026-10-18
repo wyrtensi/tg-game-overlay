@@ -23,6 +23,7 @@ import {
   type StoredMessage,
 } from "./connection";
 import { stickerDataUrl, stickerMimeType, type StickerStore } from "./sticker-store";
+import { MAX_TGS_BYTES } from "../core/media-limits";
 import type { SendKind, SendResult } from "../telegram/send-result";
 import type {
   DirectionEvent,
@@ -334,13 +335,17 @@ export class RelayWorker {
   private async loadSticker(id: string, kind: RelayStickerKind, fetch: boolean): Promise<string | null> {
     try {
       const cached = await this.deps.store.get(id);
-      if (cached) return cached.b64;
+      if (cached) return acceptableSticker(kind, cached.kind, cached.b64) ? cached.b64 : null;
     } catch (err) {
       console.error("[relay] sticker cache read failed", err);
     }
     if (!fetch || !this.session?.connection.connected) return null;
     try {
       const file = await this.session.connection.sticker(id);
+      if (!acceptableSticker(kind, file.kind, file.b64)) {
+        console.error("[relay] TGS sticker over 64 KiB, ignoring", id);
+        return null;
+      }
       if (await sha256Hex(base64ToBytes(file.b64)) !== id) {
         console.error("[relay] sticker hash mismatch, ignoring", id);
         return null;
@@ -507,6 +512,20 @@ export class RelayWorker {
     }
     await this.publishStickers(withPreviews(), "complete");
   }
+}
+
+/**
+ * A TGS sticker is gzipped JSON the overlay inflates; like Telegram, refuse
+ * one over 64 KiB, whichever side (the envelope or the file) calls it TGS.
+ */
+function acceptableSticker(kind: RelayStickerKind, fileKind: RelayStickerKind | undefined, b64: string): boolean {
+  if (kind !== "tgs" && fileKind !== "tgs") return true;
+  return base64ByteLength(b64) <= MAX_TGS_BYTES;
+}
+
+function base64ByteLength(b64: string): number {
+  const padding = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((b64.length * 3) / 4) - padding);
 }
 
 async function runLimited<T>(items: T[], limit: number, task: (item: T) => Promise<void>): Promise<void> {

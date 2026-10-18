@@ -204,6 +204,30 @@ describe("RelayWorker", () => {
     expect(pushed(calls).find((message) => message.media)?.media).toMatchObject({ kind: "webp", mimeType: "image/webp" });
   });
 
+  it("refuses TGS stickers over 64 KiB, from the server and from the cache", async () => {
+    const { calls, connections, keys, store } = await setup();
+    const encrypt = (envelope: Envelope) => encryptEnvelope(keys(), envelope);
+    const big = new Uint8Array(64 * 1024 + 1);
+    const bigId = await sha256Hex(big);
+    connections[0].stickers.set(bigId, { id: bigId, kind: "tgs", b64: bytesToBase64(big) });
+    const cachedId = "c".repeat(64);
+    store.entries.set(cachedId, { id: cachedId, kind: "tgs", b64: bytesToBase64(big), lastUsedAt: 0 });
+    const small = new Uint8Array(64 * 1024);
+    const smallId = await sha256Hex(small);
+    connections[0].stickers.set(smallId, { id: smallId, kind: "tgs", b64: bytesToBase64(small) });
+    connections[0].goOnline();
+    for (const [index, id] of [bigId, cachedId, smallId].entries()) {
+      connections[0].options.onMessage({
+        seq: index + 1,
+        at: 100 + index,
+        data: await encrypt({ v: 1, id: `s${index}`, author: "Sam", at: 1, t: "sticker", sticker: { id, kind: "tgs" } }),
+      }, false);
+    }
+    await vi.waitFor(() => expect(pushed(calls).some((message) => message.id === "s2" && message.media)).toBe(true));
+    expect(pushed(calls).filter((message) => message.media).map((message) => message.id)).toEqual(["s2"]);
+    expect(store.entries.has(bigId)).toBe(false);
+  });
+
   it("refuses images over the relay limit", async () => {
     const { calls, connections, emit } = await setup();
     connections[0].goOnline();
