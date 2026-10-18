@@ -296,16 +296,20 @@ export class TelegramWorker {
     try {
       await client.connect();
       if (abandoned()) return;
-      const authorized = await client.checkAuthorization();
+      await this.verifyAuthorization(client);
       if (abandoned()) return;
-      if (!authorized) {
-        await this.requireReauthentication(client);
-        return;
-      }
       await this.markConnected(client);
     } catch (err) {
       if (abandoned()) return;
       console.error("[telegram] connect with saved session failed", err);
+      if (telegramErrorCode(err) === "API_ID_INVALID") {
+        // The keys are wrong, not the session: keep it, stop retrying and
+        // wait for tg:api_keys_changed (it reconnects once there is no client).
+        this.client = null;
+        void client.disconnect().catch(() => {});
+        await this.reportStatus({ state: "error", error: "Telegram не принял api_id или api_hash. Проверьте свои ключи Telegram" });
+        return;
+      }
       const outcome = reconnectFailureOutcome(err);
       if (outcome.kind === "reauth_required") {
         await this.requireReauthentication(client);
@@ -313,6 +317,17 @@ export class TelegramWorker {
         this.reconnectLoop.schedule(outcome.floodWaitSeconds);
       }
     }
+  }
+
+  /**
+   * Throws unless the session is authorized. GramJS's checkAuthorization()
+   * swallows every error and answers false, so a wrong api_hash, a
+   * FLOOD_WAIT or a timeout would look like a revoked session and the saved
+   * one would be wiped; the raw call lets the caller classify the error
+   * with reconnectFailureOutcome (only session authorization codes clear it).
+   */
+  private async verifyAuthorization(client: TelegramClient): Promise<void> {
+    await client.invoke(new Api.updates.GetState());
   }
 
   private startHealthCheck(): void {
@@ -338,7 +353,7 @@ export class TelegramWorker {
     if (!client) return { kind: "reauth_required" };
     try {
       await client.connect();
-      if (!await client.checkAuthorization()) return { kind: "reauth_required" };
+      await this.verifyAuthorization(client);
       return client.connected ? { kind: "connected" } : { kind: "retry" };
     } catch (err) {
       console.error("[telegram] reconnect attempt failed", err);

@@ -329,6 +329,8 @@ export const zh: Record<string, string> = {
   "Подключите Telegram и повторите": "请连接 Telegram 后重试",
   "Не удалось загрузить стикеры": "无法加载贴纸",
   "Стикеры готовы": "贴纸已就绪",
+  "Telegram не принял api_id или api_hash. Проверьте свои ключи Telegram":
+    "Telegram 不接受该 api_id 或 api_hash。请检查您的 Telegram API 密钥",
   "Сначала сохраните свои api_id и api_hash в разделе «Свои ключи Telegram»":
     "请先在“您自己的 Telegram API 密钥”中保存 api_id 和 api_hash",
   "Не удалось определить Telegram-аккаунт": "无法识别 Telegram 账号",
