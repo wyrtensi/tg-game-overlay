@@ -20,7 +20,7 @@ import { MediaStore } from "./media-store";
 import { playbackDeadline, remainingPlaybackMs } from "./sticker-playback";
 import { isNearBottom } from "./scroll";
 import { filterStickers, pushRecent, type StickerPack, withRecentPack } from "./stickers";
-import { messageClassNames, messageContent } from "./message-presentation";
+import { messageClassNames, messageContent, messageTime, messageTimestamp } from "./message-presentation";
 import { pickerEmptyMessage, pickerProgressMessage, type StickerPickerState } from "./sticker-picker-state";
 import { DirectionSignalStore } from "./direction-signal";
 import { phraseWheelItems, wheelOrigin } from "./phrase-wheel";
@@ -388,7 +388,8 @@ class OverlayApp {
       this.hotkeyWarningEl.hidden = !error;
     });
 
-    await this.safeListen<OverlayMessagePayload>("overlay:message", (payload) => {
+    await this.safeListen<OverlayMessagePayload>("overlay:message", (incoming) => {
+      const payload = { ...incoming, at: messageTimestamp(incoming.at, Date.now()) };
       const mode: FeedMode = this.kind === "active" ? "active" : this.kind === "inactive" ? "inactive" : "hidden";
       // The worker can push the same id twice: once with just text, again
       // once the media has finished downloading. Patch the existing node in
@@ -1266,11 +1267,13 @@ class OverlayApp {
   }
 
   private buildTimeEl(at: number): HTMLTimeElement {
-    const date = new Date(at);
     const time = document.createElement("time");
     time.className = "msg-time";
-    time.dateTime = date.toISOString();
-    time.textContent = MESSAGE_TIME_FORMATTER.format(date);
+    const formatted = messageTime(at, MESSAGE_TIME_FORMATTER);
+    if (formatted) {
+      time.dateTime = formatted.dateTime;
+      time.textContent = formatted.label;
+    }
     return time;
   }
 
