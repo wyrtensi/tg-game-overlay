@@ -105,15 +105,14 @@ function saveRecentStickers(ids: string[]): void {
   }
 }
 
-/** tgs media is gzipped Lottie JSON packed into the data URL. */
+/**
+ * tgs media is gzipped Lottie JSON packed into the data URL. Inflation is
+ * capped (see tgs.ts): anything past it throws and the caller shows the
+ * normal media failure label instead of exhausting the renderer's memory.
+ */
 async function inflateTgsAnimationData(dataUrl: string): Promise<unknown> {
-  const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-
-  const { ungzip } = await import("pako");
-  return JSON.parse(ungzip(bytes, { to: "string" }));
+  const { inflateTgsDataUrl } = await import("./tgs");
+  return inflateTgsDataUrl(dataUrl);
 }
 
 interface FeedSettings {
