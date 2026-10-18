@@ -226,4 +226,5 @@ interface Config {
 - A small "N new" pill when messages arrived while hidden.
 - Readability over any game: text shadow plus a translucent backdrop behind the feed.
 - `Добавить игру` adds entered `.exe` text; with an empty field it opens a native `.exe` chooser. The visible-window list refreshes on focus and every three seconds while settings are visible.
+- A TGS sticker is shown only when Telegram marks the document as a sticker and it is at most 64 KiB (Telegram's own limit; the relay worker refuses larger ones too); the overlay stops inflating its Lottie JSON past 4 MiB and shows the media failure label instead.
 - Photos and supported media are accepted through 8 MiB. PNG, JPEG, WebP and original GIF files can be selected with the attachment button; clipboard images remain supported. TGS and WebM stickers play once for `stickerAnimationSeconds` (default 10) and pause while the overlay is hidden, off, or in markup mode.
