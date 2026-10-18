@@ -1,0 +1,86 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "tg-game-overlay",
+  "version": "0.2.0",
+  "identifier": "io.github.wyrtensi.tggameoverlay",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Telegram overlay",
+        "url": "index.html",
+        "create": false,
+        "width": 960,
+        "height": 700,
+        "minWidth": 720,
+        "minHeight": 520,
+        "visible": false
+      },
+      {
+        "label": "overlay",
+        "title": "Telegram overlay feed",
+        "url": "overlay.html",
+        "create": false,
+        "width": 800,
+        "height": 600,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "resizable": false,
+        "focus": false,
+        "visible": false
+      },
+      {
+        "label": "telegram",
+        "title": "Telegram worker",
+        "url": "telegram.html",
+        "create": false,
+        "width": 480,
+        "height": 320,
+        "visible": false,
+        "skipTaskbar": true,
+        "decorations": false
+      },
+      {
+        "label": "relay",
+        "title": "Relay worker",
+        "url": "relay.html",
+        "create": false,
+        "width": 480,
+        "height": 320,
+        "visible": false,
+        "skipTaskbar": true,
+        "decorations": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "startMenuFolder": "tg-game-overlay",
+        "installerHooks": "installer-hooks.nsh"
+      }
+    }
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "name": "tg-game-overlay",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2.7.3",
+    "@tauri-apps/plugin-opener": "^2",
+    "assert": "^2.1.0",
+    "big-integer": "^1.6.52",
+    "buffer": "^6.0.3",
+    "constants": "npm:constants-browserify@^1.0.0",
+    "crypto": "npm:crypto-browserify@^3.12.1",
+    "events": "^3.3.0",
+    "lottie-web": "^5.13.0",
+    "os": "npm:os-browserify@^0.3.0",
+    "pako": "^2.2.0",
+    "path": "npm:path-browserify@^1.0.1",
+    "process": "^0.11.10",
+    "stream": "npm:stream-browserify@^3.0.0",
+    "telegram": "^2.26.22",
+    "util": "^0.12.5"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/node": "^26.6.2",
+    "@types/pako": "^2.0.4",
+    "typescript": "~6.0.3",
+    "vite": "^8.0.16",
+    "vitest": "^5.0.1"
+  }
+}

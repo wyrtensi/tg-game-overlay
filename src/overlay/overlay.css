@@ -1,0 +1,912 @@
+/* The overlay window is transparent by default; only the zones below paint anything. */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  color: var(--overlay-text-color, #f2f2f2);
+  font-family: "Segoe UI", "Noto Sans", system-ui, sans-serif;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, var(--overlay-shadow, 0.85));
+}
+
+.zone {
+  position: fixed;
+  box-sizing: border-box;
+  border-radius: 10px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  /* The message area is one persistent box that only grows/shrinks upward
+     (its bottom edge is fixed - see layout.ts messageAreaRect), so this is
+     purely a smooth resize, never a swap between two different boxes. */
+  transition:
+    left 150ms ease,
+    top 150ms ease,
+    width 150ms ease,
+    height 150ms ease;
+}
+
+/* [hidden] has the same specificity as a class; without this, `display: flex`
+   above would win the cascade and keep a "hidden" element on screen. Applies
+   to every element here that both sets its own `display` and gets toggled
+   via the `hidden` attribute rather than a class. */
+.zone[hidden],
+.hotkey-warning[hidden],
+.markup[hidden],
+.pending-attachment[hidden],
+.sticker-panel[hidden],
+.direction-layer[hidden],
+.phrase-signal-layer[hidden],
+.phrase-wheel[hidden] {
+  display: none;
+}
+
+.hotkey-warning {
+  position: fixed;
+  z-index: 7;
+  top: 12px;
+  left: 50%;
+  box-sizing: border-box;
+  max-width: min(520px, calc(100vw - 24px));
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 187, 92, 0.65);
+  border-radius: 10px;
+  background: rgba(31, 20, 12, 0.88);
+  color: #ffe3b5;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+  text-shadow: none;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.phrase-signal-layer {
+  position: fixed;
+  z-index: 2;
+  max-width: min(360px, 70vw);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.phrase-signal {
+  display: grid;
+  gap: 3px;
+  border: 1px solid rgba(128, 219, 255, 0.54);
+  border-radius: 14px;
+  padding: 8px 13px;
+  background: rgba(7, 24, 36, 0.84);
+  box-shadow: 0 5px 24px rgba(0, 0, 0, 0.48), 0 0 18px rgba(64, 206, 255, 0.2);
+  text-align: center;
+  text-shadow: none;
+}
+
+.phrase-signal__author {
+  overflow: hidden;
+  color: rgba(202, 241, 255, 0.72);
+  font-size: 0.7em;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phrase-signal__text {
+  overflow: hidden;
+  color: #f4fcff;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-lightbox[hidden] {
+  display: none;
+}
+
+.media-lightbox {
+  position: fixed;
+  z-index: 8;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 72px 4vw 64px;
+  background: rgba(2, 8, 14, 0.84);
+  cursor: default;
+}
+
+.media-lightbox__toolbar {
+  position: absolute;
+  top: max(16px, env(safe-area-inset-top));
+  right: max(18px, env(safe-area-inset-right));
+  left: max(18px, env(safe-area-inset-left));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.media-lightbox__title,
+.media-lightbox__hint {
+  color: rgba(235, 247, 255, 0.78);
+  font-size: 13px;
+  font-weight: 600;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+}
+
+.media-lightbox__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  border: 1px solid rgba(196, 225, 247, 0.35);
+  border-radius: 12px;
+  padding: 0 12px;
+  background: rgba(16, 29, 43, 0.9);
+  color: #f3faff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.35);
+}
+
+.media-lightbox__close:hover,
+.media-lightbox__close:focus-visible {
+  border-color: rgba(128, 210, 255, 0.8);
+  background: rgba(27, 52, 72, 0.96);
+  outline: none;
+}
+
+.media-lightbox__close > span:first-child {
+  font-size: 23px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.media-lightbox__close kbd {
+  border: 1px solid rgba(207, 229, 246, 0.28);
+  border-radius: 5px;
+  padding: 2px 5px;
+  color: rgba(226, 241, 253, 0.72);
+  font: inherit;
+  font-size: 11px;
+}
+
+.media-lightbox img {
+  display: block;
+  max-width: 92vw;
+  max-height: 82vh;
+  border-radius: 12px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.65);
+}
+
+.media-lightbox__hint {
+  position: absolute;
+  right: 18px;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  left: 18px;
+  text-align: center;
+}
+
+.direction-layer {
+  position: fixed;
+  z-index: 2;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.direction-signal {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  min-width: 68px;
+  padding: 6px 10px;
+  border: 1px solid rgba(178, 220, 255, 0.5);
+  border-radius: 14px;
+  background: rgba(8, 18, 30, 0.76);
+  box-shadow: 0 5px 22px rgba(0, 0, 0, 0.48), 0 0 18px rgba(86, 186, 255, 0.22);
+  color: #d9f1ff;
+  text-shadow: none;
+}
+
+.direction-signal__author {
+  max-width: 160px;
+  overflow: hidden;
+  color: rgba(218, 241, 255, 0.74);
+  font-size: 0.68em;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.direction-signal__arrow {
+  width: 46px;
+  height: 46px;
+  transform: rotate(var(--direction-rotation, 0deg));
+  filter: drop-shadow(0 1px 4px rgba(62, 183, 255, 0.7));
+}
+
+@keyframes direction-replace {
+  from { opacity: 0; transform: scale(0.78); }
+  55% { opacity: 1; transform: scale(1.08); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.direction-signal--replace {
+  animation: direction-replace 220ms cubic-bezier(0.2, 0.85, 0.3, 1) both;
+}
+
+.phrase-wheel {
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  text-shadow: none;
+}
+
+.phrase-wheel__centre,
+.phrase-wheel__labels {
+  position: absolute;
+  top: var(--wheel-origin-y, 50%);
+  left: var(--wheel-origin-x, 50%);
+}
+
+.phrase-wheel__centre {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  width: var(--wheel-cancel-diameter, 84px);
+  height: var(--wheel-cancel-diameter, 84px);
+  border: 1px solid rgba(214, 239, 255, 0.52);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(14, 31, 48, 0.92), rgba(9, 20, 33, 0.7));
+  box-shadow: 0 0 0 5px rgba(89, 185, 255, 0.06), 0 0 24px rgba(69, 174, 255, 0.26);
+  color: rgba(229, 245, 255, 0.86);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  transform: translate(-50%, -50%);
+}
+
+.phrase-wheel__cancel-icon {
+  color: rgba(194, 232, 255, 0.92);
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 0.9;
+}
+
+.phrase-wheel--compact-cancel .phrase-wheel__cancel-label {
+  display: none;
+}
+
+.phrase-wheel__hint {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  max-width: calc(100vw - 32px);
+  box-sizing: border-box;
+  padding: 7px 12px;
+  transform: translateX(-50%);
+  border: 1px solid rgba(202, 231, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(7, 15, 25, 0.72);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+  color: rgba(229, 241, 252, 0.8);
+  font-size: 12px;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.phrase-wheel__labels {
+  width: 0;
+  height: 0;
+}
+
+.phrase-wheel__label {
+  position: absolute;
+  box-sizing: border-box;
+  max-width: min(260px, 42vw);
+  padding: 7px 12px;
+  overflow: hidden;
+  border: 1px solid rgba(202, 231, 255, 0.24);
+  border-radius: 999px;
+  background: rgba(7, 15, 25, 0.68);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.34);
+  color: rgba(239, 248, 255, 0.83);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: transform 80ms ease-out, background 120ms ease, border-color 120ms ease, box-shadow 120ms ease, color 120ms ease;
+}
+
+.phrase-wheel__label--selected {
+  border-color: rgba(165, 226, 255, 0.92);
+  background: rgba(38, 134, 193, 0.78);
+  box-shadow: 0 0 0 4px rgba(105, 203, 255, 0.18), 0 5px 24px rgba(51, 176, 255, 0.55);
+  color: #fff;
+}
+
+/* Passive feed: read-only, click-through, fades old lines out.
+   The zone itself stays invisible - only the lines carry a backdrop, so an
+   empty or half-filled feed does not paint a grey box over the game. */
+.zone--feed {
+  padding: 6px 8px;
+  background: transparent;
+}
+
+/* Extra room at the bottom for the input field when it has to sit inside
+   the message area (no space below the zone in the game window). */
+.feed-zone--input-inside {
+  padding-bottom: 48px;
+}
+
+.feed {
+  display: flex;
+  flex-direction: column;
+  /* Passive mode is a bottom-anchored ticker. */
+  justify-content: flex-end;
+  align-items: flex-start;
+  gap: 3px;
+  overflow-y: hidden;
+  flex: 1;
+  min-height: 0;
+  max-width: 100%;
+}
+
+.feed--scrollable {
+  /* flex-end makes older overflowing messages unreachable in Chromium. */
+  justify-content: flex-start;
+  overflow-y: auto;
+}
+
+.feed--scrollable > .msg:first-child {
+  margin-top: auto;
+}
+
+.feed--scrollable > .msg {
+  flex-shrink: 0;
+}
+
+.feed::-webkit-scrollbar {
+  width: 6px;
+}
+
+.feed::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+}
+
+@keyframes msg-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes msg-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+.msg {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  max-width: 100%;
+  animation: msg-fade-in 150ms ease-out both;
+}
+
+/* Only the passive feed's lines expire; history keeps them at full opacity.
+   Timing comes from OverlayApp per node via --fade-ms/--fade-delay, computed
+   with fadeDelayMs() so the fade starts at ttlMs - fadeMs and ends at ttlMs. */
+.msg--fading {
+  animation:
+    msg-fade-in 150ms ease-out both,
+    msg-fade-out var(--fade-ms, 1200ms) linear var(--fade-delay, 0ms) forwards;
+}
+
+/* The text bubble - a sticker-only message has none of this, so it shows no
+   backdrop pill around the sticker (see main.ts renderMessageEl). */
+.msg-text {
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-width: 100%;
+  padding: 3px 9px;
+  border-radius: 9px;
+  background: var(--overlay-backdrop, rgba(12, 14, 18, 0.55));
+}
+
+.msg .author {
+  color: var(--overlay-author-color, #7fb2ff);
+  font-weight: 600;
+  margin-right: 0.35em;
+}
+
+.msg--outgoing .author {
+  color: #8fe3a6;
+}
+
+.msg--dialogue.msg--outgoing {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.msg--dialogue .msg-text {
+  background: var(--overlay-incoming-bubble-color, #1c222c);
+}
+
+.msg--dialogue.msg--outgoing .msg-text {
+  background: var(--overlay-outgoing-bubble-color, #1e5d92);
+}
+
+.msg-time {
+  display: block;
+  margin-top: 3px;
+  color: rgba(222, 232, 246, 0.68);
+  font-size: 0.72em;
+  line-height: 1;
+  text-align: right;
+  text-shadow: none;
+}
+
+.msg > .msg-time {
+  align-self: flex-end;
+}
+
+.feed--without-time .msg-time {
+  display: none;
+}
+
+/* The box size is reserved up front from the payload's width/height (see
+   media.ts fitMediaBox) so nothing shifts once the image/video/lottie
+   actually paints. No backdrop here - stickers carry their own transparency. */
+.msg-media {
+  display: block;
+  overflow: hidden;
+  border-radius: 9px;
+}
+
+.msg-media img,
+.msg-media video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.msg-media--lottie svg {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.msg-media--photo-preview {
+  cursor: zoom-in;
+  outline: 1px solid rgba(183, 224, 255, 0.36);
+  outline-offset: 2px;
+}
+
+.msg-media--failed {
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  padding: 8px;
+  border: 1px solid rgba(255, 180, 180, 0.34);
+  border-radius: 8px;
+  background: rgba(30, 12, 16, 0.72);
+  color: #ffd0d0;
+  font-size: 0.76em;
+  line-height: 1.2;
+  text-align: center;
+  text-shadow: none;
+}
+
+/* The input lives below the message area (or inside its bottom edge as a
+   fallback - see layout.ts resolveInputPlacement) as its own independent
+   box: it fades/slides in without ever touching the message area's own
+   geometry, so messages never shift when the chat opens. Any future
+   sticker/controls row belongs in here too, alongside the textarea. */
+.input-zone {
+  position: fixed;
+  z-index: 4;
+  box-sizing: border-box;
+  padding: 6px;
+  border-radius: 10px;
+  background: rgba(10, 12, 16, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease,
+    left 150ms ease,
+    top 150ms ease,
+    width 150ms ease;
+}
+
+.input-zone--visible {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.send-status {
+  margin: 0 2px 6px;
+  color: #ffb4b4;
+  font-size: 0.8em;
+  text-shadow: none;
+}
+
+.sticker-toggle,
+.attachment-toggle {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.35);
+  color: rgba(255, 255, 255, 0.75);
+  cursor: pointer;
+}
+
+.sticker-toggle:hover,
+.attachment-toggle:hover,
+.sticker-toggle--active {
+  color: #fff;
+  border-color: rgba(127, 178, 255, 0.6);
+}
+
+/* Floating above the input instead of taking space in it: opening stickers
+   must not move the text box or alter the chat layout. */
+.sticker-panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  left: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: var(--sticker-panel-height, 260px);
+  max-height: 260px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 8px;
+  border: 1px solid rgba(177, 219, 255, 0.24);
+  border-radius: 10px;
+  background: rgba(10, 12, 16, 0.94);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+}
+
+.sticker-search {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.35);
+  color: inherit;
+  font: inherit;
+  text-shadow: none;
+}
+
+.sticker-search:focus {
+  outline: none;
+  border-color: rgba(127, 178, 255, 0.6);
+}
+
+.sticker-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.sticker-tab {
+  flex: 0 0 auto;
+  max-width: 112px;
+  overflow: hidden;
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.72);
+  font: inherit;
+  font-size: 0.78em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  text-shadow: none;
+}
+
+.sticker-tab[aria-selected="true"] {
+  border-color: rgba(127, 178, 255, 0.75);
+  background: rgba(127, 178, 255, 0.22);
+  color: #fff;
+}
+
+.sticker-tab:hover,
+.sticker-tab:focus-visible {
+  border-color: rgba(127, 178, 255, 0.72);
+  color: #fff;
+  outline: none;
+}
+
+.sticker-panel__refresh:hover {
+  color: #fff;
+}
+
+.sticker-panel__refresh:focus-visible {
+  outline: 1px solid rgba(127, 178, 255, 0.72);
+  outline-offset: 2px;
+  border-radius: 3px;
+  color: #fff;
+}
+
+.sticker-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.sticker-item {
+  display: block;
+  min-width: 0;
+  aspect-ratio: 1;
+  padding: 2px;
+  border: none;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+}
+
+.sticker-item:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.sticker-item img,
+.sticker-item video,
+.sticker-item__animation {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.sticker-item:focus-visible {
+  outline: 2px solid rgba(142, 205, 255, 0.92);
+  outline-offset: 1px;
+}
+
+.sticker-item:active {
+  transform: scale(0.94);
+}
+
+.sticker-item__animation svg {
+  width: 100%;
+  height: 100%;
+}
+
+.sticker-item__fallback {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  font-size: 1.3em;
+}
+
+.sticker-panel__retry {
+  align-self: flex-start;
+  padding: 4px 9px;
+  border: 1px solid rgba(127, 178, 255, 0.6);
+  border-radius: 6px;
+  background: rgba(127, 178, 255, 0.16);
+  color: inherit;
+  cursor: pointer;
+}
+
+.sticker-panel__empty {
+  font-size: 0.85em;
+  color: rgba(255, 255, 255, 0.55);
+  text-shadow: none;
+  padding: 4px 2px;
+}
+
+.sticker-panel__tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 24px;
+}
+
+.sticker-panel__progress {
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 0.76em;
+  text-shadow: none;
+}
+
+.sticker-panel__refresh {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: #a9ccff;
+  font: inherit;
+  font-size: 0.76em;
+  cursor: pointer;
+}
+
+.sticker-item:disabled {
+  cursor: wait;
+  opacity: 0.45;
+}
+
+.pending-attachment {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.pending-attachment__preview {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.pending-attachment__remove {
+  font-size: 0.8em;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.35);
+  color: inherit;
+  cursor: pointer;
+}
+
+.input {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  resize: none;
+  max-height: 6em;
+  min-height: 1.6em;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.35);
+  color: inherit;
+  font: inherit;
+  text-shadow: none;
+  user-select: text;
+  outline: none;
+}
+
+.input {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(158, 213, 255, 0.5) transparent;
+}
+
+.input::-webkit-scrollbar {
+  width: 5px;
+}
+
+.input::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.input::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(158, 213, 255, 0.46);
+}
+
+.input::-webkit-scrollbar-thumb:hover {
+  background: rgba(188, 229, 255, 0.7);
+}
+
+.input:focus {
+  border-color: rgba(127, 178, 255, 0.6);
+}
+
+.input::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* Markup mode: dim the whole window while the user draws the two zones. */
+.markup {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  cursor: crosshair;
+}
+
+.markup-rect {
+  position: absolute;
+  box-sizing: border-box;
+  border-radius: 6px;
+  background: rgba(127, 178, 255, 0.12);
+}
+
+.markup-rect--inactive {
+  border: 2px dashed #7fb2ff;
+}
+
+.markup-rect--active {
+  border: 2px dashed #8fe3a6;
+  background: rgba(143, 227, 166, 0.12);
+}
+
+.markup-size {
+  position: fixed;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(20, 22, 28, 0.9);
+  font-size: 0.85em;
+  font-weight: 600;
+  pointer-events: none;
+  transform: translate(12px, 12px);
+}
+
+.markup-hint {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  border-radius: 8px;
+  background: rgba(20, 22, 28, 0.9);
+  font-size: 0.95em;
+}
+
+.markup-actions {
+  position: fixed;
+  top: 58px;
+  left: 50%;
+  display: flex;
+  gap: 8px;
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+
+.markup-actions button {
+  padding: 7px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 7px;
+  background: rgba(20, 22, 28, 0.94);
+  color: inherit;
+  cursor: pointer;
+}

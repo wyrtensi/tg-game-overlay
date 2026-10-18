@@ -1,0 +1,48 @@
+name: release app
+
+# Push a tag like v0.2.0 to build the Windows installer and publish it as a
+# GitHub release. The build never embeds Telegram API keys: users bring their own.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npm ci
+        working-directory: server
+      - run: npm test
+      - name: Check that the tag matches the app version
+        shell: bash
+        run: |
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME does not match version $version"; exit 1; }
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TGO_NO_EMBEDDED_KEYS: "1"
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: tg-game-overlay ${{ github.ref_name }}
+          releaseBody: |
+            Windows installer for tg-game-overlay.
+
+            - `*_x64-setup.exe` is the recommended installer, `*.msi` is the alternative.
+            - This build contains no Telegram API keys. Get your own `api_id` and `api_hash` at https://my.telegram.org and enter them in Settings → Telegram → Свои ключи Telegram.
+            - The optional relay server is released separately under `server-v*` tags.
+          releaseDraft: false
+          prerelease: false

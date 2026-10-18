@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissions for the settings window and the overlay",
+  "windows": [
+    "main",
+    "overlay",
+    "telegram",
+    "relay"
+  ],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "opener:default",
+    "global-shortcut:default"
+  ]
+}

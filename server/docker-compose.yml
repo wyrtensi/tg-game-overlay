@@ -1,0 +1,25 @@
+services:
+  relay:
+    image: ghcr.io/wyrtensi/tg-game-overlay-server:latest
+    # To build the image locally instead of pulling it, comment out `image`
+    # above and uncomment the next line:
+    # build: .
+    restart: unless-stopped
+    ports:
+      - "${RELAY_PORT:-8790}:8790"
+    env_file: .env
+    volumes:
+      - relay-data:/data
+    mem_limit: 128m
+    cpus: 0.5
+    read_only: true
+    tmpfs:
+      - /tmp
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
+
+volumes:
+  relay-data:

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="ibg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#242a6b"/>
+      <stop offset="1" stop-color="#0d1033"/>
+    </linearGradient>
+    <linearGradient id="ibub" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#3fd0ff"/>
+      <stop offset="0.5" stop-color="#4f8cff"/>
+      <stop offset="1" stop-color="#9a5cff"/>
+    </linearGradient>
+    <mask id="im" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="#fff"/>
+      <g fill="none" stroke="#000" stroke-width="84">
+        <circle cx="512" cy="430" r="160"/>
+        <path d="M 512 172 V 270 M 512 590 V 688 M 254 430 H 352 M 672 430 H 770"/>
+      </g>
+      <circle cx="512" cy="430" r="50" fill="#000"/>
+    </mask>
+  </defs>
+  <rect width="1024" height="1024" rx="228" fill="url(#ibg)"/>
+  <rect x="6" y="6" width="1012" height="1012" rx="222" fill="none" stroke="#ffffff" stroke-opacity="0.16" stroke-width="12"/>
+  <path d="M 330 120 H 694 A 200 200 0 0 1 894 320 V 540 A 200 200 0 0 1 694 740 H 470 L 318 880 Q 268 925 268 858 V 738 A 200 200 0 0 1 130 540 V 320 A 200 200 0 0 1 330 120 Z" fill="url(#ibub)" mask="url(#im)"/>
+</svg>
