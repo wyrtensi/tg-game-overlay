@@ -26,8 +26,10 @@ import { mapLoginError } from "./errors";
 import {
   buildDataUrl,
   detectMedia,
+  downloadedMediaAllowed,
   exceedsMediaCap,
   fallbackMediaText,
+  mediaDownloadAllowed,
 } from "./media";
 import { extractDimensions } from "./media-extract";
 import { HISTORY_LIMIT, mapMessageToOverlay, resolveAuthorName, type SenderLike } from "./messages";
@@ -758,8 +760,7 @@ export class TelegramWorker {
       message: { ...overlay, text: rawText || fallbackMediaText(media.kind) },
     });
 
-    const knownSize = documentSize(message);
-    if (knownSize !== undefined && exceedsMediaCap(knownSize)) {
+    if (!mediaDownloadAllowed(media.kind, documentSize(message))) {
       return; // stays as a text-only placeholder, no point downloading
     }
 
@@ -822,7 +823,7 @@ export class TelegramWorker {
       if (!isCurrentGeneration(generation, this.chatGeneration)) return;
       if (!bytes) return;
       const buffer = typeof bytes === "string" ? Buffer.from(bytes) : bytes;
-      if (exceedsMediaCap(buffer.length)) return; // keep the placeholder text
+      if (!downloadedMediaAllowed(media.kind, buffer.length)) return; // keep the placeholder text
 
       const { width, height } = extractDimensions(message, media.kind);
       const dataUrl = buildDataUrl(new Uint8Array(buffer), media.mimeType);
@@ -1289,6 +1290,7 @@ export class TelegramWorker {
       if (!bytes) return null;
       const buffer = typeof bytes === "string" ? Buffer.from(bytes) : bytes;
       if (buffer.length > MAX_STICKER_PREVIEW_BYTES) return null;
+      if (request.mimeType === "application/x-tgsticker" && !downloadedMediaAllowed("tgs", buffer.length)) return null;
       return buildDataUrl(new Uint8Array(buffer), request.mimeType);
     } catch (err) {
       console.error("[telegram] sticker preview download failed", err);

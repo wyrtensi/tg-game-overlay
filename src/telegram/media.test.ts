@@ -5,7 +5,9 @@ import {
   detectMedia,
   detectMediaKind,
   exceedsMediaCap,
+  downloadedMediaAllowed,
   fallbackMediaText,
+  mediaDownloadAllowed,
 } from "./media";
 
 describe("detectMediaKind", () => {
@@ -18,7 +20,16 @@ describe("detectMediaKind", () => {
   });
 
   test("an animated .tgs sticker document is kind tgs", () => {
-    expect(detectMediaKind({ document: { mimeType: "application/x-tgsticker" } })).toBe("tgs");
+    expect(detectMediaKind({
+      document: { mimeType: "application/x-tgsticker", size: 20_000, attributes: [{ className: "DocumentAttributeSticker" }] },
+    })).toBe("tgs");
+  });
+
+  test("a file that only claims the tgs MIME type is not a sticker", () => {
+    expect(detectMediaKind({
+      document: { mimeType: "application/x-tgsticker", size: 8 * 1024 * 1024, attributes: [{ className: "DocumentAttributeFilename" }] },
+    })).toBeNull();
+    expect(detectMediaKind({ document: { mimeType: "application/x-tgsticker" } })).toBeNull();
   });
 
   test("a video sticker (webm) document is kind webm", () => {
@@ -88,5 +99,25 @@ describe("buildDataUrl", () => {
   test("encodes bytes as a base64 data URL with the given mime type", () => {
     const bytes = new Uint8Array([0x68, 0x69]); // "hi"
     expect(buildDataUrl(bytes, "image/webp")).toBe("data:image/webp;base64,aGk=");
+  });
+});
+
+describe("mediaDownloadAllowed", () => {
+  test("downloads a tgs sticker only within Telegram's 64 KiB limit", () => {
+    expect(mediaDownloadAllowed("tgs", 64 * 1024)).toBe(true);
+    expect(mediaDownloadAllowed("tgs", 64 * 1024 + 1)).toBe(false);
+    expect(mediaDownloadAllowed("tgs", 8 * 1024 * 1024)).toBe(false);
+    expect(mediaDownloadAllowed("tgs", undefined)).toBe(false);
+  });
+
+  test("keeps the general cap for other media", () => {
+    expect(mediaDownloadAllowed("webp", 8 * 1024 * 1024)).toBe(true);
+    expect(mediaDownloadAllowed("gif", 8 * 1024 * 1024 + 1)).toBe(false);
+    expect(mediaDownloadAllowed("photo", undefined)).toBe(true);
+  });
+
+  test("checks the downloaded bytes against the same limits", () => {
+    expect(downloadedMediaAllowed("tgs", 64 * 1024 + 1)).toBe(false);
+    expect(downloadedMediaAllowed("webm", 64 * 1024 + 1)).toBe(true);
   });
 });

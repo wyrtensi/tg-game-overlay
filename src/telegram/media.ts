@@ -1,9 +1,9 @@
 import { Buffer } from "buffer";
-import { MAX_MEDIA_BYTES } from "../core/media-limits";
+import { MAX_MEDIA_BYTES, MAX_TGS_BYTES } from "../core/media-limits";
 import type { MediaKind } from "./types";
 
 /** A single downloaded item over this is sent as text-only, per CONTRACT.md step 5. */
-export { MAX_MEDIA_BYTES };
+export { MAX_MEDIA_BYTES, MAX_TGS_BYTES };
 
 export function exceedsMediaCap(byteLength: number): boolean {
   return byteLength > MAX_MEDIA_BYTES;
@@ -12,7 +12,12 @@ export function exceedsMediaCap(byteLength: number): boolean {
 /** Duck-typed subset of a GramJS Message we need to classify its media. */
 export interface MediaLikeMessage {
   photo?: unknown;
-  document?: { mimeType?: string | null } | null;
+  document?: {
+    mimeType?: string | null;
+    /** GramJS hands a big-integer here; Number() reads it. */
+    size?: unknown;
+    attributes?: readonly { className?: string }[] | null;
+  } | null;
 }
 
 export interface MediaDescriptor {
@@ -43,8 +48,31 @@ export function mimeToMediaKind(mimeType: string | null | undefined): MediaKind 
 /** Classifies a message attachment and preserves its original MIME type. */
 export function detectMedia(message: MediaLikeMessage): MediaDescriptor | null {
   if (message.photo) return { kind: "photo", mimeType: "image/jpeg" };
-  if (message.document) return descriptorForMimeType(message.document.mimeType);
-  return null;
+  if (!message.document) return null;
+  const descriptor = descriptorForMimeType(message.document.mimeType);
+  // The MIME type alone is chosen by the sender: a plain file labelled as TGS
+  // is just a file, never something the overlay inflates.
+  if (descriptor?.kind === "tgs" && !hasStickerAttribute(message.document)) return null;
+  return descriptor;
+}
+
+function hasStickerAttribute(document: NonNullable<MediaLikeMessage["document"]>): boolean {
+  return (document.attributes ?? []).some((attr) => attr.className === "DocumentAttributeSticker");
+}
+
+/**
+ * Whether a media item may be downloaded at all, decided from the size
+ * Telegram reports before any byte is fetched. A TGS sticker must report a
+ * size within Telegram's own 64 KiB limit; everything else the general cap.
+ */
+export function mediaDownloadAllowed(kind: MediaKind, knownSize: number | undefined): boolean {
+  if (kind === "tgs") return knownSize !== undefined && Number.isFinite(knownSize) && knownSize <= MAX_TGS_BYTES;
+  return knownSize === undefined || !exceedsMediaCap(knownSize);
+}
+
+/** The same limits applied to the bytes actually downloaded. */
+export function downloadedMediaAllowed(kind: MediaKind, byteLength: number): boolean {
+  return kind === "tgs" ? byteLength <= MAX_TGS_BYTES : !exceedsMediaCap(byteLength);
 }
 
 /** Backward-compatible kind-only classifier for picker and focused unit tests. */
