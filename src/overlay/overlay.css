@@ -496,7 +496,16 @@ body {
   height: 100% !important;
 }
 
+/* Photo lines carry both sizes (see main.ts buildMediaEl): a line keeps
+   living across mode switches, so the mode picks the size here. */
 .msg-media--photo-preview {
+  width: var(--photo-inactive-width);
+  height: var(--photo-inactive-height);
+}
+
+.feed--active .msg-media--photo-preview {
+  width: var(--photo-active-width);
+  height: var(--photo-active-height);
   cursor: zoom-in;
   outline: 1px solid rgba(183, 224, 255, 0.36);
   outline-offset: 2px;

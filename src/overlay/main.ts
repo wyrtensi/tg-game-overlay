@@ -14,7 +14,7 @@ import { fadeDelayMs } from "./fade";
 import { planMessageSync } from "./feed-diff";
 import { messageAreaRect, resolveInputPlacement, stickerPanelHeight } from "./layout";
 import { MarkupSession } from "./markup-session";
-import { fitMediaBox, mediaElementKind, photoPreviewMaxSize, type MediaKind } from "./media";
+import { fitMediaBox, mediaElementKind, photoBoxes, type MediaKind } from "./media";
 import { mediaFailureLabel } from "./media-state";
 import { MediaStore } from "./media-store";
 import { playbackDeadline, remainingPlaybackMs } from "./sticker-playback";
@@ -1063,7 +1063,10 @@ class OverlayApp {
     // Freeze/resume the passive fade exactly at the mode boundary, not every
     // tick: entering active means "expiry paused", leaving it means the
     // fade countdown resumes from the message's real current age.
-    if (enteringActive || leavingActive) this.retimeFeedFades();
+    if (enteringActive || leavingActive) {
+      this.retimeFeedFades();
+      this.setPhotoPreviewsFocusable(isActive);
+    }
 
     this.feedZoneEl.hidden = false;
     this.inputZoneEl.hidden = false;
@@ -1071,6 +1074,8 @@ class OverlayApp {
     const area = messageAreaRect(this.settings.inactiveZone, this.settings.activeZone, isActive);
     positionZone(this.feedZoneEl, area);
     this.feedEl.classList.toggle("feed--scrollable", isActive);
+    // Mode-dependent media styling (photo preview size and affordance).
+    this.feedEl.classList.toggle("feed--active", isActive);
     this.feedZoneEl.style.setProperty(
       "--overlay-backdrop",
       backdropColor(isActive ? Math.max(this.settings.opacity, 0.7) : this.settings.opacity),
@@ -1194,6 +1199,13 @@ class OverlayApp {
     }
   }
 
+  /** Photo previews open only in the active chat, so only there can the keyboard reach them. */
+  private setPhotoPreviewsFocusable(focusable: boolean): void {
+    for (const preview of this.feedEl.querySelectorAll<HTMLElement>(".msg-media--photo-preview")) {
+      preview.tabIndex = focusable ? 0 : -1;
+    }
+  }
+
   private renderMarkup(session: MarkupSession): void {
     this.markupEl.hidden = false;
     const snapshot = session.snapshot();
@@ -1293,27 +1305,33 @@ class OverlayApp {
 
   /** Reserves the final box size up front (see media.ts fitMediaBox) so nothing shifts once it loads. */
   private buildMediaEl(messageId: string, media: MediaPayload): HTMLElement {
-    const maxSizePx = media.kind === "photo"
-      ? photoPreviewMaxSize(this.kind === "active" ? "active" : "inactive", this.settings.fontScale)
-      : BASE_STICKER_MAX_PX * this.settings.fontScale;
-    const box = fitMediaBox(media.width, media.height, maxSizePx);
-
     const container = document.createElement("div");
     container.className = "msg-media";
-    container.style.width = `${box.width}px`;
-    container.style.height = `${box.height}px`;
-    if (media.kind === "photo" && this.kind === "active") {
+    if (media.kind === "photo") {
+      // A photo that arrives in the passive feed stays on screen when the
+      // chat opens, so it gets both sizes and the open handler right away;
+      // CSS (.feed--active) picks the size, the handler acts only when active.
+      const boxes = photoBoxes(media.width, media.height, this.settings.fontScale);
+      container.style.setProperty("--photo-active-width", `${boxes.active.width}px`);
+      container.style.setProperty("--photo-active-height", `${boxes.active.height}px`);
+      container.style.setProperty("--photo-inactive-width", `${boxes.inactive.width}px`);
+      container.style.setProperty("--photo-inactive-height", `${boxes.inactive.height}px`);
       container.classList.add("msg-media--photo-preview");
-      container.tabIndex = 0;
+      container.tabIndex = this.kind === "active" ? 0 : -1;
       container.setAttribute("role", "button");
       container.setAttribute("aria-label", t("Открыть изображение"));
-      container.addEventListener("click", () => this.openPhoto(media));
-      container.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          this.openPhoto(media);
-        }
+      container.addEventListener("click", () => {
+        if (this.kind === "active") this.openPhoto(media);
       });
+      container.addEventListener("keydown", (event) => {
+        if (this.kind !== "active" || (event.key !== "Enter" && event.key !== " ")) return;
+        event.preventDefault();
+        this.openPhoto(media);
+      });
+    } else {
+      const box = fitMediaBox(media.width, media.height, BASE_STICKER_MAX_PX * this.settings.fontScale);
+      container.style.width = `${box.width}px`;
+      container.style.height = `${box.height}px`;
     }
 
     const kind = mediaElementKind(media.kind, media.mimeType);

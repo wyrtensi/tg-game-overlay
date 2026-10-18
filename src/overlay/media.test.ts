@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { fitMediaBox, mediaElementKind, photoPreviewMaxSize } from "./media";
+import { fitMediaBox, mediaElementKind, photoBoxes, photoPreviewMaxSize } from "./media";
 
 describe("mediaElementKind", () => {
   test("photos and webp stickers render as an image", () => {
@@ -52,4 +52,11 @@ test("uses a compact photo preview in the active chat before opening the full vi
   expect(photoPreviewMaxSize("active", 1)).toBeLessThan(photoPreviewMaxSize("inactive", 1));
   expect(photoPreviewMaxSize("active", 1)).toBe(96);
   expect(photoPreviewMaxSize("inactive", 1)).toBe(360);
+});
+
+test("gives a photo line both mode sizes up front", () => {
+  expect(photoBoxes(1200, 600, 1)).toEqual({
+    active: { width: 96, height: 48 },
+    inactive: { width: 360, height: 180 },
+  });
 });
