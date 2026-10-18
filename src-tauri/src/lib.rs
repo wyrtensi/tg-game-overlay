@@ -1552,21 +1552,36 @@ fn set_transport(app: AppHandle, transport: String) -> Result<Config, String> {
     if transport != TRANSPORT_TELEGRAM && transport != TRANSPORT_RELAY {
         return Err(format!("Неизвестный способ связи: {transport}"));
     }
-    let mut config = get_config(app.clone());
-    if config.transport == transport {
-        return Ok(config);
-    }
-    config.transport = transport;
+    let app_state = app.state::<AppState>();
+    // The switch lands in memory first: from_inactive_worker drops the old
+    // worker from here on, so nothing it sends can slip in after the reset.
+    let (config, previous_transport) = {
+        let mut current = app_state.config.lock().unwrap();
+        if current.transport == transport {
+            return Ok(current.clone());
+        }
+        let previous = std::mem::replace(&mut current.transport, transport);
+        (current.clone(), previous)
+    };
     let offline = serde_json::json!({ "state": "offline" });
-    {
-        let app_state = app.state::<AppState>();
-        *app_state.connected.lock().unwrap() = false;
-        *app_state.telegram_status.lock().unwrap() = offline.clone();
-    }
+    let previous_connected = std::mem::replace(&mut *app_state.connected.lock().unwrap(), false);
+    let previous_status =
+        std::mem::replace(&mut *app_state.telegram_status.lock().unwrap(), offline.clone());
     let _ = app.emit("overlay:reset", serde_json::json!({}));
     let _ = app.emit("tg:status", offline);
-    // Saving last broadcasts config:changed, which is what the workers react to.
-    save_config(&app, config)
+
+    if let Err(error) = config.save(&app_state.config_path) {
+        // The workers never saw config:changed: hand the chat back to the old one.
+        app_state.config.lock().unwrap().transport = previous_transport;
+        *app_state.connected.lock().unwrap() = previous_connected;
+        *app_state.telegram_status.lock().unwrap() = previous_status.clone();
+        let _ = app.emit("tg:status", previous_status);
+        request_telegram_history(&app);
+        return Err(error);
+    }
+    // config:changed is what the workers react to.
+    push_config(&app, &config);
+    Ok(config)
 }
 
 /// False in public builds: users bring their own api_id / api_hash.
