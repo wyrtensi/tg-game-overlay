@@ -31,6 +31,7 @@ import {
   fallbackMediaText,
   mediaDownloadAllowed,
 } from "./media";
+import { PushedMediaCache } from "./media-cache";
 import { extractDimensions } from "./media-extract";
 import { HISTORY_LIMIT, mapMessageToOverlay, resolveAuthorName, type SenderLike } from "./messages";
 import { buildInputPeer } from "./peer";
@@ -70,6 +71,8 @@ import { resolveLanguage, setLocale, t } from "../i18n";
 const HEALTH_CHECK_INTERVAL_MS = 5000;
 const HISTORY_BACKFILL_INTERVAL_MS = 15_000;
 const HISTORY_ERROR_LOG_INTERVAL_MS = 60_000;
+/** Media kept for history re-pushes (see PushedMediaCache); the history is ~20 messages. */
+const PUSHED_MEDIA_CACHE_BYTES = 32 * 1024 * 1024;
 
 // Sticker picker tuning (CONTRACT.md's tg:stickers_request/tg_stickers): the
 // contract wants full StickerPack[] in one answer, so there is no way to
@@ -149,14 +152,18 @@ export class TelegramWorker {
   private selfName: string | null = null;
   private selfId: string | null = null;
   /**
-   * Message ids already pushed to the overlay. sendMessage/sendFile push their
-   * own result immediately (its `out`/id/peer are already known - no need to
-   * wait for an update), and if Telegram *also* redelivers it as a
-   * NewMessage update (observed behavior for multi-device sync, but not
-   * guaranteed by the GramJS APIs we call), this dedupes it. Bounded so it
-   * cannot grow forever over a long session.
+   * Message ids already pushed to the overlay, with the edit date they were
+   * pushed at. sendMessage/sendFile push their own result immediately (its
+   * `out`/id/peer are already known - no need to wait for an update), and if
+   * Telegram *also* redelivers it as a NewMessage update (observed behavior
+   * for multi-device sync, but not guaranteed by the GramJS APIs we call),
+   * this dedupes it. History backfills skip what the overlay already shows
+   * unless it was edited since. Cleared only when the overlay feed starts
+   * empty (page reload, chat or account change). Bounded so it cannot grow
+   * forever over a long session.
    */
-  private pushedIds = new Set<string>();
+  private pushedIds = new Map<string, number>();
+  private readonly pushedMedia = new PushedMediaCache(PUSHED_MEDIA_CACHE_BYTES);
   private healthCheckTimer: number | null = null;
   private historyBackfillTimer: number | null = null;
   private lastHistoryErrorAt = 0;
@@ -175,6 +182,9 @@ export class TelegramWorker {
     await Promise.all([
       safeListen<TgLoginEvent>("tg:login", whenActive((evt) => this.onLoginEvent(evt))),
       safeListen<Record<string, never>>("tg:history_request", whenActive(() => {
+        // The overlay page (re)started with an empty feed: everything is new
+        // to it, now or after the next connect. Media comes from pushedMedia.
+        this.pushedIds.clear();
         if (this.client?.connected) void this.pushHistory(this.chatGeneration);
       })),
       safeListen<WorkerConfig>("config:changed", (config) => {
@@ -187,6 +197,7 @@ export class TelegramWorker {
         if (chatChanged) {
           const generation = ++this.chatGeneration;
           this.pushedIds.clear();
+          this.pushedMedia.clear();
           void safeInvoke("reset_overlay_feed").then(() => {
             if (nextChat && this.client && isCurrentGeneration(generation, this.chatGeneration)) {
               return this.pushHistory(generation);
@@ -338,7 +349,7 @@ export class TelegramWorker {
     }, HEALTH_CHECK_INTERVAL_MS);
     this.historyBackfillTimer = window.setInterval(() => {
       if (!this.active || !this.client?.connected || !this.chat) return;
-      void this.pushHistory(this.chatGeneration, false);
+      void this.pushHistory(this.chatGeneration, true);
     }, HISTORY_BACKFILL_INTERVAL_MS);
   }
 
@@ -378,6 +389,7 @@ export class TelegramWorker {
     await this.reportStatus({ state: "connected" });
     // The live subscription does not replay a disconnected gap, so history
     // remains the authoritative backfill after every successful reconnect.
+    // The overlay still shows what it had: only new or edited messages go.
     await this.pushHistory(this.chatGeneration);
   }
 
@@ -390,6 +402,7 @@ export class TelegramWorker {
     this.stickerLoadEpoch += 1;
     this.stickerLoad.reset();
     this.pushedIds.clear();
+    this.pushedMedia.clear();
     this.phraseMessageIds.clear();
   }
 
@@ -650,7 +663,8 @@ export class TelegramWorker {
     return messageBelongsToTopic(this.chat?.topicId, replyTo, message.id);
   }
 
-  private async pushHistory(generation = this.chatGeneration, resetDeduplication = true): Promise<void> {
+  /** `background` is the periodic backfill, whose repeated failures are logged at most once a minute. */
+  private async pushHistory(generation = this.chatGeneration, background = false): Promise<void> {
     if (!this.client || !this.chat) return;
     const chat = this.chat;
     try {
@@ -660,18 +674,17 @@ export class TelegramWorker {
         ...(chat.topicId == null ? {} : { replyTo: chat.topicId }),
       });
       if (!isCurrentGeneration(generation, this.chatGeneration)) return;
-      if (resetDeduplication) this.pushedIds.clear();
       // Newest-first from Telegram; the feed reads oldest-to-newest.
       const ordered = [...messages].reverse();
       for (const message of ordered) {
         if (!isCurrentGeneration(generation, this.chatGeneration)) return;
         if (!messageBelongsToTopic(chat.topicId, message.replyTo as { replyToTopId?: number; replyToMsgId?: number } | undefined, message.id)) continue;
-        await this.pushMessage(message, generation);
+        await this.pushMessage(message, generation, "history");
       }
       this.lastHistoryErrorAt = 0;
     } catch (err) {
       const now = Date.now();
-      if (resetDeduplication || now - this.lastHistoryErrorAt >= HISTORY_ERROR_LOG_INTERVAL_MS) {
+      if (!background || now - this.lastHistoryErrorAt >= HISTORY_ERROR_LOG_INTERVAL_MS) {
         console.error("[telegram] failed to load history for the mirrored chat", err);
         this.lastHistoryErrorAt = now;
       }
@@ -704,39 +717,48 @@ export class TelegramWorker {
 
     // Re-emit an ordinary edit with the original id. The overlay feed treats
     // it as an in-place update instead of creating a second chat line.
-    await this.pushMessage(message, this.chatGeneration, true);
+    await this.pushMessage(message, this.chatGeneration, "edit");
   }
 
   private static readonly MAX_TRACKED_IDS = 500;
 
-  /** True if this message id was already pushed (see pushedIds' doc comment). */
-  private markPushed(id: string): boolean {
-    if (this.pushedIds.has(id)) return true;
-    this.pushedIds.add(id);
+  /** True if this message id was already pushed at this edit date (see pushedIds' doc comment). */
+  private markPushed(id: string, editStamp: number): boolean {
+    if (this.pushedIds.get(id) === editStamp) return true;
+    this.pushedIds.delete(id);
+    this.pushedIds.set(id, editStamp);
     if (this.pushedIds.size > TelegramWorker.MAX_TRACKED_IDS) {
-      const oldest = this.pushedIds.values().next().value;
+      const oldest = this.pushedIds.keys().next().value;
       if (oldest !== undefined) this.pushedIds.delete(oldest);
     }
     return false;
   }
 
+  /**
+   * `source` says where the message comes from: a live update or our own
+   * send ("live"), a live edit ("edit"), or a history load or backfill.
+   */
   private async pushMessage(
     message: Api.Message,
     generation = this.chatGeneration,
-    isEdit = false,
+    source: "live" | "edit" | "history" = "live",
   ): Promise<void> {
     if (!isCurrentGeneration(generation, this.chatGeneration)) return;
+    // Direction and phrase messages are signals, never feed lines, and only
+    // a live update means someone just sent one: from history (and the 15 s
+    // backfill) the same old arrow or phrase would pop up again and again.
     if (this.phraseMessageIds.has(String(message.id))) {
-      await this.pushPhraseMessage(message, generation);
+      if (source !== "history") await this.pushPhraseMessage(message, generation);
       return;
     }
     const observedAt = Date.now();
     const direction = directionFromText(message.message ?? "");
     if (direction) {
-      await this.pushDirection(message, direction, generation, observedAt);
+      if (source !== "history") await this.pushDirection(message, direction, generation, observedAt);
       return;
     }
-    if (!isEdit && this.markPushed(String(message.id))) return;
+    const alreadyPushed = this.markPushed(String(message.id), message.editDate ?? 0);
+    if (alreadyPushed && source !== "edit") return;
 
     const author = await this.resolveAuthor(message);
     if (!isCurrentGeneration(generation, this.chatGeneration)) return;
@@ -754,6 +776,15 @@ export class TelegramWorker {
 
     this.cacheStickerDocument(media.kind, message);
 
+    const fileKey = mediaFileKey(message);
+    const pushedMedia = fileKey ? this.pushedMedia.get(overlay.id, fileKey) : undefined;
+    if (pushedMedia) {
+      await safeInvoke("push_message", {
+        message: { ...overlay, text: rawText || fallbackMediaText(media.kind), media: pushedMedia },
+      });
+      return;
+    }
+
     // Placeholder first (caption if any, else the media word), never block on
     // the download - see CONTRACT.md step 5.
     await safeInvoke("push_message", {
@@ -764,7 +795,7 @@ export class TelegramWorker {
       return; // stays as a text-only placeholder, no point downloading
     }
 
-    void this.attachMediaLater(message, overlay, rawText, media, generation);
+    void this.attachMediaLater(message, overlay, rawText, media, generation, fileKey);
   }
 
   private async pushDirection(
@@ -816,6 +847,7 @@ export class TelegramWorker {
     rawText: string,
     media: { kind: MediaKind; mimeType: string },
     generation: number,
+    fileKey: string | undefined,
   ): Promise<void> {
     if (!this.client) return;
     try {
@@ -827,11 +859,13 @@ export class TelegramWorker {
 
       const { width, height } = extractDimensions(message, media.kind);
       const dataUrl = buildDataUrl(new Uint8Array(buffer), media.mimeType);
+      const mediaRef = { ...media, dataUrl, width, height };
+      if (fileKey) this.pushedMedia.set(overlay.id, fileKey, mediaRef);
       await safeInvoke("push_message", {
         message: {
           ...overlay,
           text: rawText || fallbackMediaText(media.kind),
-          media: { ...media, dataUrl, width, height },
+          media: mediaRef,
         },
       });
     } catch (err) {
@@ -1337,6 +1371,15 @@ export class TelegramWorker {
 
 function dialogLoadError(error: unknown): string {
   return error instanceof Error && error.message ? error.message : "Telegram не ответил";
+}
+
+/** Identifies the file behind a message's media, so a cached download is never reused for a swapped file. */
+function mediaFileKey(message: Api.Message): string | undefined {
+  const photo = message.photo;
+  if (photo && photo.className === "Photo") return `photo:${photo.id.toString()}`;
+  const doc = message.document;
+  if (doc && doc.className === "Document") return `document:${doc.id.toString()}`;
+  return undefined;
 }
 
 function documentSize(message: Api.Message): number | undefined {
