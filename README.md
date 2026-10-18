@@ -12,6 +12,8 @@
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/wyrtensi/tg-game-overlay?color=lightgrey"></a>
 </p>
 
+<p align="center"><b>English</b> · <a href="README.ru.md">Русский</a> · <a href="README.zh-CN.md">简体中文</a></p>
+
 **tg-game-overlay** puts a chat on top of games that have none. Messages fade in
 over the game, you answer without alt-tabbing, and your friends see it in their
 own overlay or in a regular Telegram client.
@@ -24,7 +26,8 @@ The chat travels one of two ways:
   are end-to-end encrypted on each PC; the server only forwards ciphertext and
   serves a shared sticker catalog.
 
-> The interface is in Russian. Windows 10 and 11 only.
+> The interface speaks English, Russian and Simplified Chinese and follows the
+> Windows display language; change it in **Settings → Startup**. Windows 10 and 11 only.
 
 ## Features
 
@@ -36,6 +39,7 @@ The chat travels one of two ways:
 - **Direction signals**: arrow keys show a big arrow to everyone in the chat.
 - Tray app that never steals focus; per-game show / hidden / blocked modes.
 - Looks you can tune: font scale, colours, bubbles, shadows, timings.
+- Interface in English, Russian and Simplified Chinese.
 
 ## Install
 
@@ -44,7 +48,7 @@ The chat travels one of two ways:
    and run it. WebView2 ships with Windows 11; the installer fetches it on
    Windows 10 when it is missing.
 2. The app starts in the tray. Left click the tray icon for the settings.
-3. Follow the **Готовность к игре** card at the top: it always points at the
+3. Follow the **Ready to play** card at the top: it always points at the
    next step.
 
 ### Telegram mode
@@ -56,7 +60,7 @@ which takes two minutes:
    **API development tools**.
 2. Create an application (any name; platform *Desktop*) and copy `api_id` and
    `api_hash`.
-3. In the app, open **Telegram → Свои ключи Telegram**, paste both values and
+3. In the app, open **Telegram → Your Telegram API keys**, paste both values and
    save. They are stored for your Windows user only (DPAPI) and never leave
    your PC.
 4. Sign in with your phone number and the code Telegram sends you, then pick
@@ -70,7 +74,7 @@ between.
 
 1. Someone in your group runs the relay server (see below) and shares its
    address and **access key**.
-2. In **Способ связи** choose **Свой сервер**, enter the address
+2. Under **Connection** choose **Own server**, enter the address
    (for example `203.0.113.10:8790`), the access key, a room name, a room
    password and the name others will see.
 3. Everyone who enters the same room name and password lands in the same chat.
@@ -148,6 +152,8 @@ cd server && npm test             # relay server (node:test)
 - `src/telegram/` is a hidden worker that owns the MTProto client (GramJS).
 - `src/relay/` is a hidden worker for the relay transport: WebCrypto, the
   WebSocket client and the sticker cache.
+- `src/i18n/` holds the English and Chinese dictionaries, keyed by the Russian
+  source text; a test fails when a visible string has no translation.
 - `server/` is the relay server.
 
 Pages never talk to each other directly; Rust is the bus. See
@@ -158,14 +164,6 @@ Pages never talk to each other directly; Rust is the bus. See
 - Exclusive fullscreen (older DX9 to DX11 games) hides topmost windows; run
   such games in borderless windowed mode.
 - Games are matched by executable name; protected processes may not report one.
-
-## Кратко по-русски
-
-Оверлей чата для игр без встроенного чата. Работает через ваш Telegram
-(свои `api_id`/`api_hash` берутся на my.telegram.org) или через собственный
-лёгкий сервер со сквозным шифрованием в Docker. Установщик лежит в
-[релизах](https://github.com/wyrtensi/tg-game-overlay/releases/latest),
-сервер публикуется отдельным релизом и образом `ghcr.io/wyrtensi/tg-game-overlay-server`.
 
 ## License
 

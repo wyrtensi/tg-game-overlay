@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 /** Validation for the text/author colour pickers in the feed-appearance section. */
 
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
@@ -13,6 +14,6 @@ export function normalizeHexColor(value: string): string | null {
 }
 
 export function validateHexColor(value: string): string | undefined {
-  if (!isValidHexColor(value)) return "Цвет должен быть в формате #rrggbb";
+  if (!isValidHexColor(value)) return t("Цвет должен быть в формате #rrggbb");
   return undefined;
 }

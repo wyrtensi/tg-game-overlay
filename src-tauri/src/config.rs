@@ -179,6 +179,10 @@ fn default_transport() -> String {
     TRANSPORT_TELEGRAM.to_string()
 }
 
+fn default_language() -> String {
+    "auto".to_string()
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
@@ -221,6 +225,9 @@ pub struct Config {
     pub transport: String,
     #[serde(default)]
     pub relay: RelaySettings,
+    /// Interface language: "auto" (follow Windows), "en", "ru" or "zh".
+    #[serde(default = "default_language")]
+    pub language: String,
     #[serde(default = "default_direction_signals")]
     pub direction_signals: DirectionSettings,
     #[serde(default = "default_phrase_wheel")]
@@ -252,6 +259,7 @@ impl Default for Config {
             chat: None,
             transport: default_transport(),
             relay: RelaySettings::default(),
+            language: default_language(),
             direction_signals: default_direction_signals(),
             phrase_wheel: default_phrase_wheel(),
             autostart: false,

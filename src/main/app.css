@@ -280,23 +280,21 @@ body {
   outline: none;
 }
 
+/* The badge text is set (translated) by renderReadiness. */
 .readiness__step[data-complete="true"]::before {
-  content: "Готово";
+  content: attr(data-badge);
   color: var(--ok);
   font-size: var(--font-size-xs);
   font-weight: 600;
 }
 
 .readiness__step[data-complete="false"]::before {
-  content: "Дальше";
+  content: attr(data-badge);
   color: var(--accent-strong);
   font-size: var(--font-size-xs);
   font-weight: 600;
 }
 
-.readiness__step#readiness-ready[data-complete="false"]::before {
-  content: "Осталось";
-}
 
 .readiness__label {
   color: var(--text-dim);

@@ -1,4 +1,5 @@
 import type { LoginStep, TgStatus } from "./types";
+import { t } from "../i18n";
 
 /** Formats a FLOOD_WAIT-style remaining time as a live "m:ss" countdown. */
 export function formatCountdown(seconds: number): string {
@@ -9,14 +10,14 @@ export function formatCountdown(seconds: number): string {
 }
 
 const BASE_LABELS: Record<TgStatus["state"], (status: TgStatus) => string> = {
-  offline: () => "Не подключено",
-  connecting: () => "Подключение…",
-  reconnecting: () => "Связь потеряна",
-  code: (status) => (status.phone ? `Введите код из Telegram для ${status.phone}` : "Введите код из Telegram"),
-  password: () => "Введите пароль двухфакторной аутентификации",
-  connected: (status) => (status.phone ? `Подключено: ${status.phone}` : "Подключено"),
-  reauth_required: () => "Сессия закончилась. Войдите заново",
-  error: (status) => status.error || "Ошибка подключения",
+  offline: () => t("Не подключено"),
+  connecting: () => t("Подключение…"),
+  reconnecting: () => t("Связь потеряна"),
+  code: (status) => (status.phone ? t("Введите код из Telegram для {phone}", { phone: status.phone }) : t("Введите код из Telegram")),
+  password: () => t("Введите пароль двухфакторной аутентификации"),
+  connected: (status) => (status.phone ? t("Подключено: {phone}", { phone: status.phone }) : t("Подключено")),
+  reauth_required: () => t("Сессия закончилась. Войдите заново"),
+  error: (status) => (status.error ? t(status.error) : t("Ошибка подключения")),
 };
 
 /** A single Russian line describing the current Telegram connection status. */
@@ -25,7 +26,7 @@ export function describeTelegramStatus(status: TgStatus): string {
 
   if (status.waitSeconds && status.waitSeconds > 0) {
     const separator = /[.!?…]$/.test(base) ? " " : ". ";
-    return `${base}${separator}Повтор через ${formatCountdown(status.waitSeconds)}`;
+    return base + separator + t("Повтор через {time}", { time: formatCountdown(status.waitSeconds) });
   }
 
   return base;

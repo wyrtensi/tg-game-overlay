@@ -1,4 +1,5 @@
 import type { ChatKind, ChatRef } from "./types";
+import { t } from "../i18n";
 
 const KIND_LABELS: Record<ChatKind, string> = {
   user: "человек",
@@ -7,8 +8,8 @@ const KIND_LABELS: Record<ChatKind, string> = {
 };
 
 export function describeChatKind(kind: ChatKind, isBot = false): string {
-  if (kind === "user" && isBot) return "бот";
-  return KIND_LABELS[kind];
+  if (kind === "user" && isBot) return t("бот");
+  return t(KIND_LABELS[kind]);
 }
 
 /** Filters the complete dialog cache in the settings window. */

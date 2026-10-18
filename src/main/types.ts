@@ -41,10 +41,14 @@ export interface Config {
   /** Which worker carries the chat; absent means Telegram. */
   transport?: Transport;
   relay?: RelaySettings;
+  /** "auto" follows the Windows display language. */
+  language?: LanguageSetting;
   profiles: Profile[];
 }
 
 export type Transport = "telegram" | "relay";
+
+export type LanguageSetting = "auto" | "en" | "ru" | "zh";
 
 /** The relay server and room; the access key and room password are stored as secrets, not here. */
 export interface RelaySettings {

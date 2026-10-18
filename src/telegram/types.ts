@@ -41,6 +41,7 @@ export interface WorkerConfig {
   chat?: ChatRef | null;
   /** "relay" hands the chat to the relay worker; this worker then stays idle. */
   transport?: "telegram" | "relay";
+  language?: string;
 }
 
 export type LoginStep = "phone" | "code" | "password" | "logout";

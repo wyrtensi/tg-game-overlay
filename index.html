@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Telegram Overlay — настройки</title>
+    <title data-i18n>Telegram Overlay — настройки</title>
     <link rel="stylesheet" href="/src/main/app.css" />
     <script type="module" src="/src/main/app.ts" defer></script>
   </head>
@@ -13,11 +13,11 @@
       <header class="app-header">
         <div class="app-header__identity">
           <h1 class="app-header__title">Telegram Overlay</h1>
-          <p class="app-header__subtitle">Настройка чата поверх игр</p>
+          <p class="app-header__subtitle" data-i18n>Настройка чата поверх игр</p>
         </div>
         <div class="app-header__meta">
-          <span id="overlay-status" class="status-badge" data-state="off">Демо-режим</span>
-          <p class="app-header__hint">
+          <span id="overlay-status" class="status-badge" data-state="off" data-i18n>Демо-режим</span>
+          <p class="app-header__hint" data-i18n>
             Окно можно закрыть — оверлей продолжает работать в трее, показать его снова можно
             иконкой в области уведомлений.
           </p>
@@ -26,48 +26,48 @@
 
       <p id="global-status" role="status" class="status-line"></p>
 
-      <nav class="settings-nav" aria-label="Разделы настроек">
-        <a href="#transport-heading">Связь</a>
+      <nav class="settings-nav" aria-label="Разделы настроек" data-i18n-attr="aria-label">
+        <a href="#transport-heading" data-i18n>Связь</a>
         <a id="nav-transport-link" href="#telegram-heading">Telegram</a>
-        <a href="#profiles-heading">Игры</a>
-        <a href="#hotkeys-heading">Клавиши</a>
-        <a href="#direction-heading">Стрелки</a>
-        <a href="#phrase-wheel-heading">Колесо фраз</a>
-        <a href="#appearance-heading">Вид чата</a>
-        <a href="#general-heading">Запуск</a>
+        <a href="#profiles-heading" data-i18n>Игры</a>
+        <a href="#hotkeys-heading" data-i18n>Клавиши</a>
+        <a href="#direction-heading" data-i18n>Стрелки</a>
+        <a href="#phrase-wheel-heading" data-i18n>Колесо фраз</a>
+        <a href="#appearance-heading" data-i18n>Вид чата</a>
+        <a href="#general-heading" data-i18n>Запуск</a>
       </nav>
 
       <main class="app-body">
         <section id="readiness-card" class="readiness card" aria-labelledby="readiness-heading">
           <div class="card__header">
             <div>
-              <h2 id="readiness-heading">Готовность к игре</h2>
-              <p class="readiness__hint">Пройдите незавершённые шаги — настройки сохраняются сразу.</p>
+              <h2 id="readiness-heading" data-i18n>Готовность к игре</h2>
+              <p class="readiness__hint" data-i18n>Пройдите незавершённые шаги — настройки сохраняются сразу.</p>
             </div>
           </div>
           <ol class="readiness__steps">
             <li>
               <button id="readiness-telegram" type="button" class="readiness__step">
                 <span id="readiness-telegram-label" class="readiness__label">1. Telegram</span>
-                <span id="readiness-telegram-status" class="readiness__status">Войти в Telegram</span>
+                <span id="readiness-telegram-status" class="readiness__status" data-i18n>Войти в Telegram</span>
               </button>
             </li>
             <li>
               <button id="readiness-chat" type="button" class="readiness__step">
-                <span id="readiness-chat-label" class="readiness__label">2. Чат</span>
-                <span id="readiness-chat-status" class="readiness__status">Выберите чат</span>
+                <span id="readiness-chat-label" class="readiness__label" data-i18n>2. Чат</span>
+                <span id="readiness-chat-status" class="readiness__status" data-i18n>Выберите чат</span>
               </button>
             </li>
             <li>
               <button id="readiness-game" type="button" class="readiness__step">
-                <span class="readiness__label">3. Игра</span>
-                <span id="readiness-game-status" class="readiness__status">Добавьте игру</span>
+                <span class="readiness__label" data-i18n>3. Игра</span>
+                <span id="readiness-game-status" class="readiness__status" data-i18n>Добавьте игру</span>
               </button>
             </li>
             <li>
               <button id="readiness-ready" type="button" class="readiness__step" disabled>
-                <span class="readiness__label">4. Готово</span>
-                <span id="readiness-ready-status" class="readiness__status">Почти готово</span>
+                <span class="readiness__label" data-i18n>4. Готово</span>
+                <span id="readiness-ready-status" class="readiness__status" data-i18n>Почти готово</span>
               </button>
             </li>
           </ol>
@@ -75,17 +75,17 @@
 
         <section class="card" aria-labelledby="transport-heading">
           <div class="card__header">
-            <h2 id="transport-heading" tabindex="-1">Способ связи</h2>
+            <h2 id="transport-heading" tabindex="-1" data-i18n>Способ связи</h2>
           </div>
           <div class="form-row">
             <span class="form-row__label">
-              Через что идёт чат
-              <span class="form-row__hint">Работает что-то одно</span>
+              <span data-i18n>Через что идёт чат</span>
+              <span class="form-row__hint" data-i18n>Работает что-то одно</span>
             </span>
             <div class="form-row__control">
               <div class="mode-switch" role="group" aria-labelledby="transport-heading">
                 <button id="transport-telegram" type="button" aria-pressed="true">Telegram</button>
-                <button id="transport-relay" type="button" aria-pressed="false">Свой сервер</button>
+                <button id="transport-relay" type="button" aria-pressed="false" data-i18n>Свой сервер</button>
               </div>
               <p id="transport-hint" class="form-row__hint"></p>
               <p id="transport-error" class="field__error" role="alert"></p>
@@ -95,58 +95,58 @@
 
         <section id="relay-card" class="card" aria-labelledby="relay-heading" hidden>
           <div class="card__header">
-            <h2 id="relay-heading" tabindex="-1">Свой сервер</h2>
+            <h2 id="relay-heading" tabindex="-1" data-i18n>Свой сервер</h2>
             <div class="telegram-status-actions">
-              <span id="relay-status-badge" class="status-badge" data-state="offline" aria-live="polite">Не подключено</span>
-              <button id="relay-reconnect-now" type="button" class="btn btn--small" hidden>Повторить сейчас</button>
+              <span id="relay-status-badge" class="status-badge" data-state="offline" aria-live="polite" data-i18n>Не подключено</span>
+              <button id="relay-reconnect-now" type="button" class="btn btn--small" hidden data-i18n>Повторить сейчас</button>
             </div>
           </div>
-          <p class="form-row__hint relay-intro">
+          <p class="form-row__hint relay-intro" data-i18n>
             Сообщения шифруются на вашем компьютере ключом, который выводится из названия комнаты и
             пароля. Сервер пересылает только шифротекст и не может его прочитать. Адрес и ключ
             доступа даёт владелец сервера.
           </p>
           <form id="relay-form" autocomplete="off">
             <div class="form-row">
-              <label class="form-row__label" for="relay-url-input">Адрес сервера</label>
+              <label class="form-row__label" for="relay-url-input" data-i18n>Адрес сервера</label>
               <div class="form-row__control">
                 <input id="relay-url-input" type="text" spellcheck="false" placeholder="203.0.113.10:8790" />
               </div>
             </div>
             <div class="form-row">
               <label class="form-row__label" for="relay-access-key-input">
-                Ключ доступа
-                <span class="form-row__hint">По сети не передаётся</span>
+                <span data-i18n>Ключ доступа</span>
+                <span class="form-row__hint" data-i18n>По сети не передаётся</span>
               </label>
               <div class="form-row__control">
                 <input id="relay-access-key-input" type="password" spellcheck="false" />
               </div>
             </div>
             <div class="form-row">
-              <label class="form-row__label" for="relay-room-input" tabindex="-1">Комната</label>
+              <label class="form-row__label" for="relay-room-input" tabindex="-1" data-i18n>Комната</label>
               <div class="form-row__control">
-                <input id="relay-room-input" type="text" spellcheck="false" placeholder="Например, squad" />
+                <input id="relay-room-input" type="text" spellcheck="false" placeholder="Например, squad" data-i18n-attr="placeholder" />
               </div>
             </div>
             <div class="form-row">
               <label class="form-row__label" for="relay-password-input">
-                Пароль комнаты
-                <span class="form-row__hint">Одинаковый у всех в комнате</span>
+                <span data-i18n>Пароль комнаты</span>
+                <span class="form-row__hint" data-i18n>Одинаковый у всех в комнате</span>
               </label>
               <div class="form-row__control">
                 <input id="relay-password-input" type="password" spellcheck="false" />
               </div>
             </div>
             <div class="form-row">
-              <label class="form-row__label" for="relay-name-input">Ваше имя</label>
+              <label class="form-row__label" for="relay-name-input" data-i18n>Ваше имя</label>
               <div class="form-row__control">
-                <input id="relay-name-input" type="text" maxlength="64" placeholder="Как вас видят в чате" />
+                <input id="relay-name-input" type="text" maxlength="64" placeholder="Как вас видят в чате" data-i18n-attr="placeholder" />
               </div>
             </div>
             <p id="relay-error" class="field__error" role="alert"></p>
             <div class="relay-actions">
-              <button id="relay-save" type="submit" class="btn btn--primary">Сохранить и подключиться</button>
-              <button id="relay-forget" type="button" class="btn">Забыть ключ и пароль</button>
+              <button id="relay-save" type="submit" class="btn btn--primary" data-i18n>Сохранить и подключиться</button>
+              <button id="relay-forget" type="button" class="btn" data-i18n>Забыть ключ и пароль</button>
             </div>
           </form>
         </section>
@@ -155,13 +155,13 @@
           <div class="card__header">
             <h2 id="telegram-heading" tabindex="-1">Telegram</h2>
             <div class="telegram-status-actions">
-              <span id="tg-status-badge" class="status-badge" data-state="offline" aria-live="polite">Не подключено</span>
-              <button id="tg-reconnect-now" type="button" class="btn btn--small" hidden>Повторить сейчас</button>
+              <span id="tg-status-badge" class="status-badge" data-state="offline" aria-live="polite" data-i18n>Не подключено</span>
+              <button id="tg-reconnect-now" type="button" class="btn btn--small" hidden data-i18n>Повторить сейчас</button>
             </div>
           </div>
 
           <div class="form-row" id="tg-login-row">
-            <label class="form-row__label" for="tg-login-input" id="tg-login-label">Номер телефона</label>
+            <label class="form-row__label" for="tg-login-input" id="tg-login-label" data-i18n>Номер телефона</label>
             <div class="form-row__control">
               <form id="tg-login-form" class="inline-form">
                 <input
@@ -171,9 +171,9 @@
                   placeholder="+79261234567"
                   aria-describedby="tg-login-error"
                 />
-                <button id="tg-login-submit" type="submit" class="btn btn--primary">Отправить код</button>
+                <button id="tg-login-submit" type="submit" class="btn btn--primary" data-i18n>Отправить код</button>
               </form>
-              <p id="tg-login-hint" class="form-row__hint">
+              <p id="tg-login-hint" class="form-row__hint" data-i18n>
                 Международный формат, например +79261234567
               </p>
               <p id="tg-login-error" class="field__error" role="alert"></p>
@@ -181,24 +181,24 @@
           </div>
 
           <div class="form-row" id="tg-connected-row" hidden>
-            <span class="form-row__label">Аккаунт</span>
+            <span class="form-row__label" data-i18n>Аккаунт</span>
             <div class="form-row__control">
               <div class="form-row__control-inline">
                 <span id="tg-connected-line"></span>
-                <button id="tg-logout" type="button" class="btn btn--danger">Выйти</button>
+                <button id="tg-logout" type="button" class="btn btn--danger" data-i18n>Выйти</button>
               </div>
             </div>
           </div>
 
           <div class="form-row">
             <span class="form-row__label" id="tg-chat-label" tabindex="-1">
-              Чат
-              <span class="form-row__hint">Куда транслировать оверлей</span>
+              <span data-i18n>Чат</span>
+              <span class="form-row__hint" data-i18n>Куда транслировать оверлей</span>
             </span>
             <div class="form-row__control">
               <div class="form-row__control-inline">
                 <p id="tg-chat-current" class="tg-chat-current"></p>
-                <button id="tg-chat-toggle" type="button" class="btn" disabled aria-describedby="tg-chat-label">
+                <button id="tg-chat-toggle" type="button" class="btn" disabled aria-describedby="tg-chat-label" data-i18n>
                   Сменить
                 </button>
               </div>
@@ -208,16 +208,15 @@
                   type="text"
                   placeholder="Имя, @ник или ID"
                   aria-label="Поиск по имени, нику или ID"
-                  disabled
-                />
-                <ul id="tg-chat-list" class="tg-chat-list" role="listbox" aria-label="Список чатов"></ul>
+                  disabled data-i18n-attr="placeholder,aria-label" />
+                <ul id="tg-chat-list" class="tg-chat-list" role="listbox" aria-label="Список чатов" data-i18n-attr="aria-label"></ul>
               </div>
             </div>
           </div>
 
           <details id="tg-api-keys" class="api-keys">
-            <summary id="tg-api-keys-summary" tabindex="-1">Свои ключи Telegram</summary>
-            <p id="tg-api-keys-hint" class="form-row__hint api-keys__hint">
+            <summary id="tg-api-keys-summary" tabindex="-1" data-i18n>Свои ключи Telegram</summary>
+            <p id="tg-api-keys-hint" class="form-row__hint api-keys__hint" data-i18n>
               Приложение уже работает со встроенными ключами — свои нужны только для отладки или
               обхода лимитов, большинству это не требуется.
             </p>
@@ -229,8 +228,7 @@
                   type="text"
                   inputmode="numeric"
                   autocomplete="off"
-                  placeholder="Используются встроенные ключи"
-                />
+                  placeholder="Используются встроенные ключи" data-i18n-attr="placeholder" />
                 <p id="tg-api-id-error" class="field__error" role="alert"></p>
               </div>
             </div>
@@ -241,95 +239,92 @@
                 <p id="tg-api-hash-error" class="field__error" role="alert"></p>
               </div>
             </div>
-            <button id="tg-api-keys-save" type="button" class="btn">Сохранить ключи</button>
-            <button id="tg-api-keys-clear" type="button" class="btn" hidden>Вернуть встроенные ключи</button>
+            <button id="tg-api-keys-save" type="button" class="btn" data-i18n>Сохранить ключи</button>
+            <button id="tg-api-keys-clear" type="button" class="btn" hidden data-i18n>Вернуть встроенные ключи</button>
           </details>
         </section>
 
         <section class="card" aria-labelledby="profiles-heading">
           <div class="card__header">
-            <h2 id="profiles-heading" tabindex="-1">Игры</h2>
+            <h2 id="profiles-heading" tabindex="-1" data-i18n>Игры</h2>
           </div>
 
           <form id="profile-add-form" class="inline-form profile-add-form">
-            <label class="sr-only" for="profile-exe-input">Исполняемый файл игры</label>
+            <label class="sr-only" for="profile-exe-input" data-i18n>Исполняемый файл игры</label>
             <input
               id="profile-exe-input"
               type="text"
               autocomplete="off"
-              placeholder="game.exe или C:\\Games\\game.exe"
-              aria-describedby="profile-exe-hint profile-exe-error"
-            />
-            <button id="profile-add-button" type="button" class="btn btn--primary">Добавить игру</button>
+              placeholder="game.exe или C:\Games\game.exe"
+              aria-describedby="profile-exe-hint profile-exe-error" data-i18n-attr="placeholder" />
+            <button id="profile-add-button" type="button" class="btn btn--primary" data-i18n>Добавить игру</button>
           </form>
-          <p id="profile-exe-hint" class="form-row__hint">Введите имя или путь к .exe и нажмите Enter. Если поле пустое, «Добавить игру» откроет выбор файла.</p>
+          <p id="profile-exe-hint" class="form-row__hint" data-i18n>Введите имя или путь к .exe и нажмите Enter. Если поле пустое, «Добавить игру» откроет выбор файла.</p>
           <div class="profile-process">
-            <label for="profile-process-select">Или выберите запущенную игру</label>
+            <label for="profile-process-select" data-i18n>Или выберите запущенную игру</label>
             <div class="profile-process__controls">
               <select id="profile-process-select" aria-describedby="profile-process-hint"></select>
-              <button id="profile-process-refresh" type="button" class="btn">Обновить список</button>
+              <button id="profile-process-refresh" type="button" class="btn" data-i18n>Обновить список</button>
             </div>
-            <p id="profile-process-hint" class="form-row__hint">Выбранная игра добавится в список ниже. Если её нет, обновите список или укажите .exe выше.</p>
+            <p id="profile-process-hint" class="form-row__hint" data-i18n>Выбранная игра добавится в список ниже. Если её нет, обновите список или укажите .exe выше.</p>
           </div>
           <p id="profile-exe-error" class="field__error" role="alert"></p>
 
-          <p id="profiles-empty" class="empty-state" hidden>
+          <p id="profiles-empty" class="empty-state" hidden data-i18n>
             Список игр пуст. Оверлей работает только в играх из этого списка —
             добавьте `.exe` или выберите окно запущенной игры, чтобы включить чат поверх неё.
           </p>
 
-          <div id="profiles-list" class="profiles-list" aria-label="Добавленные игры"></div>
+          <div id="profiles-list" class="profiles-list" aria-label="Добавленные игры" data-i18n-attr="aria-label"></div>
         </section>
 
         <section class="card" aria-labelledby="hotkeys-heading">
-          <h2 id="hotkeys-heading">Горячие клавиши</h2>
+          <h2 id="hotkeys-heading" data-i18n>Горячие клавиши</h2>
 
           <div class="form-row">
-            <label class="form-row__label" for="hotkey-input">Горячая клавиша чата</label>
+            <label class="form-row__label" for="hotkey-input" data-i18n>Горячая клавиша чата</label>
             <div class="form-row__control">
               <input
                 id="hotkey-input"
                 type="text"
                 readonly
                 placeholder="Нажмите клавишу или сочетание"
-                aria-describedby="hotkey-hint hotkey-error hotkey-runtime-error"
-              />
-              <p id="hotkey-hint" class="form-row__hint">По умолчанию — английская T. Одиночная клавиша открывает чат только в активной игре; пока чат открыт, та же клавиша вводится как обычная буква. Закрыть чат можно клавишей Esc.</p>
+                aria-describedby="hotkey-hint hotkey-error hotkey-runtime-error" data-i18n-attr="placeholder" />
+              <p id="hotkey-hint" class="form-row__hint" data-i18n>По умолчанию — английская T. Одиночная клавиша открывает чат только в активной игре; пока чат открыт, та же клавиша вводится как обычная буква. Закрыть чат можно клавишей Esc.</p>
               <p id="hotkey-error" class="field__error" role="alert"></p>
               <p id="hotkey-runtime-error" class="field__error" role="alert"></p>
             </div>
           </div>
 
           <div class="form-row">
-            <label class="form-row__label" for="markup-hotkey-input">Режим разметки зон</label>
+            <label class="form-row__label" for="markup-hotkey-input" data-i18n>Режим разметки зон</label>
             <div class="form-row__control">
               <input
                 id="markup-hotkey-input"
                 type="text"
                 readonly
                 placeholder="Нажмите сочетание клавиш"
-                aria-describedby="markup-hotkey-error"
-              />
+                aria-describedby="markup-hotkey-error" data-i18n-attr="placeholder" />
               <p id="markup-hotkey-error" class="field__error" role="alert"></p>
             </div>
           </div>
         </section>
 
         <section class="card" aria-labelledby="direction-heading">
-          <h2 id="direction-heading">Указатели направления</h2>
-          <p class="card__hint">В игре отправляют один обновляемый сигнал в Telegram и показывают стрелку поверх чата.</p>
+          <h2 id="direction-heading" data-i18n>Указатели направления</h2>
+          <p class="card__hint" data-i18n>В игре отправляют один обновляемый сигнал в Telegram и показывают стрелку поверх чата.</p>
           <label class="checkbox-row">
             <input id="direction-enabled" type="checkbox" />
-            Включить указатели направления
+            <span data-i18n>Включить указатели направления</span>
           </label>
           <div class="direction-keys">
-            <label>Вверх <input id="direction-up-key" type="text" readonly /></label>
-            <label>Вниз <input id="direction-down-key" type="text" readonly /></label>
-            <label>Влево <input id="direction-left-key" type="text" readonly /></label>
-            <label>Вправо <input id="direction-right-key" type="text" readonly /></label>
+            <label><span data-i18n>Вверх</span> <input id="direction-up-key" type="text" readonly /></label>
+            <label><span data-i18n>Вниз</span> <input id="direction-down-key" type="text" readonly /></label>
+            <label><span data-i18n>Влево</span> <input id="direction-left-key" type="text" readonly /></label>
+            <label><span data-i18n>Вправо</span> <input id="direction-right-key" type="text" readonly /></label>
           </div>
           <div class="form-row">
-            <label class="form-row__label" for="direction-display-ms">Показывать стрелку</label>
+            <label class="form-row__label" for="direction-display-ms" data-i18n>Показывать стрелку</label>
             <div class="form-row__control form-row__control-inline">
               <input id="direction-display-ms" type="range" min="500" max="10000" step="100" />
               <span id="direction-display-value" class="form-row__value"></span>
@@ -339,53 +334,53 @@
         </section>
 
         <section class="card" aria-labelledby="phrase-wheel-heading">
-          <h2 id="phrase-wheel-heading">Колесо фраз</h2>
-          <p class="card__hint">Зажмите сочетание в игре, наведите мышь на фразу и отпустите. Границы секторов не показываются.</p>
+          <h2 id="phrase-wheel-heading" data-i18n>Колесо фраз</h2>
+          <p class="card__hint" data-i18n>Зажмите сочетание в игре, наведите мышь на фразу и отпустите. Границы секторов не показываются.</p>
           <label class="checkbox-row">
             <input id="phrase-wheel-enabled" type="checkbox" />
-            Включить колесо фраз
+            <span data-i18n>Включить колесо фраз</span>
           </label>
           <div class="form-row">
-            <label class="form-row__label" for="phrase-wheel-hotkey">Зажать для выбора</label>
+            <label class="form-row__label" for="phrase-wheel-hotkey" data-i18n>Зажать для выбора</label>
             <div class="form-row__control">
-              <input id="phrase-wheel-hotkey" type="text" readonly placeholder="Нажмите сочетание клавиш" />
+              <input id="phrase-wheel-hotkey" type="text" readonly placeholder="Нажмите сочетание клавиш" data-i18n-attr="placeholder" />
             </div>
           </div>
           <div class="form-row">
-            <label class="form-row__label" for="phrase-wheel-dead-zone">Нейтральная зона</label>
+            <label class="form-row__label" for="phrase-wheel-dead-zone" data-i18n>Нейтральная зона</label>
             <div class="form-row__control form-row__control-inline">
               <input id="phrase-wheel-dead-zone" type="range" min="16" max="160" step="1" />
               <span id="phrase-wheel-dead-zone-value" class="form-row__value"></span>
             </div>
           </div>
-          <div id="phrase-wheel-phrases" class="phrase-wheel-phrases" aria-label="Фразы колеса"></div>
-          <button id="phrase-wheel-add" type="button" class="btn">Добавить фразу</button>
+          <div id="phrase-wheel-phrases" class="phrase-wheel-phrases" aria-label="Фразы колеса" data-i18n-attr="aria-label"></div>
+          <button id="phrase-wheel-add" type="button" class="btn" data-i18n>Добавить фразу</button>
           <p id="phrase-wheel-error" class="field__error" role="alert"></p>
         </section>
 
         <section class="card" aria-labelledby="appearance-heading">
           <div class="card__header">
-            <h2 id="appearance-heading">Вид чата</h2>
-            <button id="reset-feed-defaults" type="button" class="btn">
+            <h2 id="appearance-heading" data-i18n>Вид чата</h2>
+            <button id="reset-feed-defaults" type="button" class="btn" data-i18n>
               Сбросить по умолчанию
             </button>
           </div>
 
           <div class="form-row">
             <label class="form-row__label" for="ttl-slider">
-              Время показа сообщения
-              <span class="form-row__hint">Как долго строка видна поверх игры</span>
+              <span data-i18n>Время показа сообщения</span>
+              <span class="form-row__hint" data-i18n>Как долго строка видна поверх игры</span>
             </label>
             <div class="form-row__control">
               <div class="form-row__control-inline">
                 <input id="ttl-slider" type="range" min="3" max="60" step="1" value="10" />
-                <span id="ttl-value" class="form-row__value">10 с</span>
+                <span id="ttl-value" class="form-row__value" data-i18n>10 с</span>
               </div>
             </div>
           </div>
 
           <div class="form-row">
-            <label class="form-row__label" for="opacity-slider">Непрозрачность фона</label>
+            <label class="form-row__label" for="opacity-slider" data-i18n>Непрозрачность фона</label>
             <div class="form-row__control">
               <div class="form-row__control-inline">
                 <input id="opacity-slider" type="range" min="0" max="1" step="0.01" value="0.45" />
@@ -395,7 +390,7 @@
           </div>
 
           <div class="form-row">
-            <label class="form-row__label" for="font-scale-slider">Масштаб текста</label>
+            <label class="form-row__label" for="font-scale-slider" data-i18n>Масштаб текста</label>
             <div class="form-row__control">
               <div class="form-row__control-inline">
                 <input id="font-scale-slider" type="range" min="0.8" max="1.6" step="0.05" value="1" />
@@ -406,8 +401,8 @@
 
           <div class="form-row">
             <label class="form-row__label" for="shadow-slider">
-              Тень текста
-              <span class="form-row__hint">Помогает читать поверх ярких сцен</span>
+              <span data-i18n>Тень текста</span>
+              <span class="form-row__hint" data-i18n>Помогает читать поверх ярких сцен</span>
             </label>
             <div class="form-row__control">
               <div class="form-row__control-inline">
@@ -418,61 +413,61 @@
           </div>
 
           <div class="form-row">
-            <label class="form-row__label" for="fade-slider">Длительность затухания</label>
+            <label class="form-row__label" for="fade-slider" data-i18n>Длительность затухания</label>
             <div class="form-row__control">
               <div class="form-row__control-inline">
                 <input id="fade-slider" type="range" min="0" max="5000" step="50" value="1200" />
-                <span id="fade-value" class="form-row__value">1.2 с</span>
+                <span id="fade-value" class="form-row__value" data-i18n>1.2 с</span>
               </div>
             </div>
           </div>
 
           <div class="form-row">
             <label class="form-row__label" for="sticker-animation-slider">
-              Анимация стикеров
-              <span class="form-row__hint">Сколько секунд анимированные стикеры проигрываются в сообщении</span>
+              <span data-i18n>Анимация стикеров</span>
+              <span class="form-row__hint" data-i18n>Сколько секунд анимированные стикеры проигрываются в сообщении</span>
             </label>
             <div class="form-row__control">
               <div class="form-row__control-inline">
                 <input id="sticker-animation-slider" type="range" min="0" max="60" step="1" value="10" />
-                <span id="sticker-animation-value" class="form-row__value">10 с</span>
+                <span id="sticker-animation-value" class="form-row__value" data-i18n>10 с</span>
               </div>
             </div>
           </div>
 
           <div class="form-row">
-            <label class="form-row__label" for="message-layout-select">Расположение сообщений</label>
+            <label class="form-row__label" for="message-layout-select" data-i18n>Расположение сообщений</label>
             <div class="form-row__control">
               <select id="message-layout-select">
-                <option value="compact">Компактный список</option>
-                <option value="dialogue">Диалог: мои справа, входящие слева</option>
+                <option value="compact" data-i18n>Компактный список</option>
+                <option value="dialogue" data-i18n>Диалог: мои справа, входящие слева</option>
               </select>
             </div>
           </div>
 
           <div class="form-row form-row--checkbox">
-            <span class="form-row__label" id="show-author-label">Имена в сообщениях</span>
+            <span class="form-row__label" id="show-author-label" data-i18n>Имена в сообщениях</span>
             <div class="form-row__control">
               <label class="checkbox-row" for="show-author-checkbox">
                 <input id="show-author-checkbox" type="checkbox" checked aria-labelledby="show-author-label" />
-                Показывать имя отправителя
+                <span data-i18n>Показывать имя отправителя</span>
               </label>
             </div>
           </div>
 
           <div class="form-row form-row--checkbox">
-            <span class="form-row__label" id="show-message-time-label">Время сообщений</span>
+            <span class="form-row__label" id="show-message-time-label" data-i18n>Время сообщений</span>
             <div class="form-row__control">
               <label class="checkbox-row" for="show-message-time-checkbox">
                 <input id="show-message-time-checkbox" type="checkbox" checked aria-labelledby="show-message-time-label" />
-                Показывать время отправки
+                <span data-i18n>Показывать время отправки</span>
               </label>
-              <p class="form-row__hint">Время отображается в часовом поясе компьютера, в формате чч:мм.</p>
+              <p class="form-row__hint" data-i18n>Время отображается в часовом поясе компьютера, в формате чч:мм.</p>
             </div>
           </div>
 
           <div class="form-row">
-            <label class="form-row__label" for="text-color-input">Цвет текста</label>
+            <label class="form-row__label" for="text-color-input" data-i18n>Цвет текста</label>
             <div class="form-row__control">
               <div class="form-row__control-inline">
                 <input id="text-color-input" type="color" value="#f2f2f2" aria-describedby="text-color-error" />
@@ -482,7 +477,7 @@
           </div>
 
           <div class="form-row">
-            <label class="form-row__label" for="author-color-input">Цвет имени автора</label>
+            <label class="form-row__label" for="author-color-input" data-i18n>Цвет имени автора</label>
             <div class="form-row__control">
               <div class="form-row__control-inline">
                 <input
@@ -497,7 +492,7 @@
           </div>
 
           <div class="form-row">
-            <label class="form-row__label" for="incoming-bubble-color-input">Входящие сообщения</label>
+            <label class="form-row__label" for="incoming-bubble-color-input" data-i18n>Входящие сообщения</label>
             <div class="form-row__control">
               <div class="form-row__control-inline">
                 <input id="incoming-bubble-color-input" type="color" value="#1c222c" aria-describedby="incoming-bubble-color-error" />
@@ -507,7 +502,7 @@
           </div>
 
           <div class="form-row">
-            <label class="form-row__label" for="outgoing-bubble-color-input">Мои сообщения</label>
+            <label class="form-row__label" for="outgoing-bubble-color-input" data-i18n>Мои сообщения</label>
             <div class="form-row__control">
               <div class="form-row__control-inline">
                 <input id="outgoing-bubble-color-input" type="color" value="#1e5d92" aria-describedby="outgoing-bubble-color-error" />
@@ -517,7 +512,7 @@
           </div>
 
           <div class="form-row form-row--preview">
-            <label class="form-row__label" id="preview-heading">Предпросмотр</label>
+            <label class="form-row__label" id="preview-heading" data-i18n>Предпросмотр</label>
             <div class="form-row__control">
               <div class="feed-preview">
                 <div class="feed-preview__toolbar">
@@ -525,20 +520,19 @@
                     id="preview-bg-toggle"
                     type="button"
                     class="btn btn--ghost"
-                    aria-pressed="false"
-                  >
+                    aria-pressed="false" data-i18n>
                     Светлый фон
                   </button>
                 </div>
                 <div id="feed-preview-surface" class="feed-preview__surface" aria-labelledby="preview-heading">
                   <div class="feed-preview__message">
-                    <span class="feed-preview__author">Игрок1</span>
-                    <span class="feed-preview__text">Отличный ход!</span>
+                    <span class="feed-preview__author" data-i18n>Игрок1</span>
+                    <span class="feed-preview__text" data-i18n>Отличный ход!</span>
                     <time class="feed-preview__time">14:32</time>
                   </div>
                   <div class="feed-preview__message">
-                    <span class="feed-preview__author">Игрок2</span>
-                    <span class="feed-preview__text">Го во второй раунд</span>
+                    <span class="feed-preview__author" data-i18n>Игрок2</span>
+                    <span class="feed-preview__text" data-i18n>Го во второй раунд</span>
                     <time class="feed-preview__time">14:33</time>
                   </div>
                 </div>
@@ -548,20 +542,32 @@
         </section>
 
         <section class="card" aria-labelledby="general-heading">
-          <h2 id="general-heading">Запуск</h2>
+          <h2 id="general-heading" data-i18n>Запуск</h2>
+
+          <div class="form-row">
+            <label class="form-row__label" for="language-select" data-i18n>Язык интерфейса</label>
+            <div class="form-row__control">
+              <select id="language-select">
+                <option value="auto" data-i18n>Как в системе</option>
+                <option value="en">English</option>
+                <option value="ru">Русский</option>
+                <option value="zh">中文</option>
+              </select>
+            </div>
+          </div>
 
           <div class="form-row form-row--checkbox">
-            <span class="form-row__label" id="autostart-label">Автозапуск</span>
+            <span class="form-row__label" id="autostart-label" data-i18n>Автозапуск</span>
             <div class="form-row__control">
               <label class="checkbox-row" for="autostart-checkbox">
                 <input id="autostart-checkbox" type="checkbox" aria-labelledby="autostart-label" />
-                Запускать вместе с Windows
+                <span data-i18n>Запускать вместе с Windows</span>
               </label>
             </div>
           </div>
 
           <div class="form-row form-row--checkbox">
-            <span class="form-row__label" id="demo-feed-label">Демо-лента</span>
+            <span class="form-row__label" id="demo-feed-label" data-i18n>Демо-лента</span>
             <div class="form-row__control">
               <label class="checkbox-row" for="demo-feed-checkbox">
                 <input
@@ -570,9 +576,9 @@
                   aria-labelledby="demo-feed-label"
                   aria-describedby="demo-feed-hint"
                 />
-                Показывать тестовые сообщения без Telegram
+                <span data-i18n>Показывать тестовые сообщения без Telegram</span>
               </label>
-              <p id="demo-feed-hint" class="form-row__hint">Работает только пока Telegram не подключён.</p>
+              <p id="demo-feed-hint" class="form-row__hint" data-i18n>Работает только пока Telegram не подключён.</p>
             </div>
           </div>
         </section>

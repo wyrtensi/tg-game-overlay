@@ -30,44 +30,44 @@
     </div>
 
     <div id="phrase-wheel-layer" class="phrase-wheel" hidden aria-live="polite">
-      <div class="phrase-wheel__hint">Отпустите над фразой, чтобы отправить · центр — отмена</div>
+      <div class="phrase-wheel__hint" data-i18n>Отпустите над фразой, чтобы отправить · центр — отмена</div>
       <div class="phrase-wheel__centre" aria-hidden="true">
         <span class="phrase-wheel__cancel-icon">×</span>
-        <span class="phrase-wheel__cancel-label">Отмена</span>
+        <span class="phrase-wheel__cancel-label" data-i18n>Отмена</span>
       </div>
       <div id="phrase-wheel-labels" class="phrase-wheel__labels"></div>
     </div>
 
-    <div id="media-lightbox" class="media-lightbox" hidden role="dialog" aria-modal="true" aria-label="Просмотр изображения">
+    <div id="media-lightbox" class="media-lightbox" hidden role="dialog" aria-modal="true" aria-label="Просмотр изображения" data-i18n-attr="aria-label">
       <div class="media-lightbox__toolbar">
-        <span class="media-lightbox__title">Просмотр фото</span>
-        <button id="media-lightbox-close" class="media-lightbox__close" type="button" aria-label="Закрыть фото">
+        <span class="media-lightbox__title" data-i18n>Просмотр фото</span>
+        <button id="media-lightbox-close" class="media-lightbox__close" type="button" aria-label="Закрыть фото" data-i18n-attr="aria-label">
           <span aria-hidden="true">×</span>
-          <span>Закрыть</span>
+          <span data-i18n>Закрыть</span>
           <kbd>Esc</kbd>
         </button>
       </div>
-      <img id="media-lightbox-image" alt="Полноразмерное изображение" />
-      <div class="media-lightbox__hint">Чтобы вернуться к чату, нажмите Esc или щёлкните вне фото</div>
+      <img id="media-lightbox-image" alt="Полноразмерное изображение" data-i18n-attr="alt" />
+      <div class="media-lightbox__hint" data-i18n>Чтобы вернуться к чату, нажмите Esc или щёлкните вне фото</div>
     </div>
 
     <div id="input-zone" class="input-zone" hidden>
       <div id="pending-attachment" class="pending-attachment" hidden>
         <img id="pending-attachment-preview" class="pending-attachment__preview" alt="" />
-        <button id="pending-attachment-remove" type="button" class="pending-attachment__remove">
+        <button id="pending-attachment-remove" type="button" class="pending-attachment__remove" data-i18n>
           Убрать
         </button>
       </div>
       <div id="sticker-panel" class="sticker-panel" hidden></div>
       <div id="send-status" class="send-status" hidden></div>
       <div class="input-row">
-        <button id="attachment-toggle" type="button" class="attachment-toggle" aria-label="Добавить фото или GIF">
+        <button id="attachment-toggle" type="button" class="attachment-toggle" aria-label="Добавить фото или GIF" data-i18n-attr="aria-label">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
             <path d="M8 12.5 14.5 6a3 3 0 0 1 4.2 4.2l-8.4 8.4a5 5 0 0 1-7.1-7.1L12 2.7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
           </svg>
         </button>
         <input id="attachment-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
-        <button id="sticker-toggle" type="button" class="sticker-toggle" aria-label="Стикеры">
+        <button id="sticker-toggle" type="button" class="sticker-toggle" aria-label="Стикеры" data-i18n-attr="aria-label">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
             <path
               d="M7 3h8l6 6v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4z"
@@ -82,8 +82,7 @@
           id="input"
           class="input"
           rows="1"
-          placeholder="Написать сообщение..."
-        ></textarea>
+          placeholder="Написать сообщение..." data-i18n-attr="placeholder"></textarea>
       </div>
     </div>
 
@@ -93,9 +92,9 @@
       <div id="markup-size" class="markup-size" hidden></div>
       <div id="markup-hint" class="markup-hint"></div>
       <div id="markup-actions" class="markup-actions" hidden>
-        <button id="markup-save" type="button">Сохранить</button>
-        <button id="markup-customize-active" type="button">Настроить область открытого чата</button>
-        <button id="markup-cancel-customize" type="button" hidden>Не менять</button>
+        <button id="markup-save" type="button" data-i18n>Сохранить</button>
+        <button id="markup-customize-active" type="button" data-i18n>Настроить область открытого чата</button>
+        <button id="markup-cancel-customize" type="button" hidden data-i18n>Не менять</button>
       </div>
     </div>
   </body>

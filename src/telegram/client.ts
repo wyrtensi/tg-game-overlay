@@ -63,6 +63,7 @@ import type {
   TgStatus,
   WorkerConfig,
 } from "./types";
+import { resolveLanguage, setLocale, t } from "../i18n";
 
 const HEALTH_CHECK_INTERVAL_MS = 5000;
 const HISTORY_BACKFILL_INTERVAL_MS = 15_000;
@@ -175,6 +176,7 @@ export class TelegramWorker {
         if (this.client?.connected) void this.pushHistory(this.chatGeneration);
       })),
       safeListen<WorkerConfig>("config:changed", (config) => {
+        setLocale(resolveLanguage(config.language, typeof navigator === "undefined" ? [] : navigator.languages ?? []));
         void this.applyTransport(config.transport);
         if (!this.active) return;
         const nextChat = config.chat ?? null;
@@ -223,6 +225,7 @@ export class TelegramWorker {
     this.chat = config.chat ?? null;
     this.chatGeneration = 1;
     this.active = config.transport !== "relay";
+    setLocale(resolveLanguage(config.language, typeof navigator === "undefined" ? [] : navigator.languages ?? []));
   }
 
   private hasApiKeys(): boolean {
@@ -824,7 +827,7 @@ export class TelegramWorker {
     try {
       const me = await client.getMe();
       this.selfId = (me as { id?: { toString(): string } }).id?.toString() ?? null;
-      this.selfName = resolveAuthorName(me as unknown as SenderLike, "Я");
+      this.selfName = resolveAuthorName(me as unknown as SenderLike, t("Я"));
     } catch (err) {
       console.error("[telegram] getMe() failed, outgoing messages will fall back to getSender()", err);
       this.selfName = null;
@@ -964,7 +967,7 @@ export class TelegramWorker {
         errorCode: telegramErrorCode,
       });
       await safeInvoke("tg_phrase", {
-        payload: { messageId: String(sent.messageId), author: this.selfName ?? "Я", phrase: evt.phrase, at: evt.at, outgoing: true },
+        payload: { messageId: String(sent.messageId), author: this.selfName ?? t("Я"), phrase: evt.phrase, at: evt.at, outgoing: true },
       });
       await this.reportSendResult({ requestId: evt.requestId, kind: "phrase", ok: true, messageId: String(sent.messageId) });
     } catch (err) {

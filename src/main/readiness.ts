@@ -1,4 +1,5 @@
 import type { ChatRef, Config, TgStatus } from "./types";
+import { t } from "../i18n";
 
 export type ReadinessStepId = "telegram" | "chat" | "game" | "ready";
 
@@ -36,7 +37,7 @@ export function readinessState(status: TgStatus, config: ReadinessConfig, contex
   const ready: ReadinessStep = {
     id: "ready",
     complete: telegramComplete && chatComplete && gameComplete,
-    text: telegramComplete && chatComplete && gameComplete ? `Готово — ${config.hotkey}` : "Почти готово",
+    text: telegramComplete && chatComplete && gameComplete ? t("Готово — {hotkey}", { hotkey: config.hotkey }) : t("Почти готово"),
   };
   const steps = [telegram, chat, game, ready];
   return { steps, next: steps.find((step) => !step.complete && step.targetId) ?? null };
@@ -44,38 +45,38 @@ export function readinessState(status: TgStatus, config: ReadinessConfig, contex
 
 function telegramStep(status: TgStatus, complete: boolean, needsKeys: boolean): ReadinessStep {
   if (!complete && needsKeys) {
-    return { id: "telegram", complete, text: "Нужны свои ключи API", targetId: "tg-api-keys-summary" };
+    return { id: "telegram", complete, text: t("Нужны свои ключи API"), targetId: "tg-api-keys-summary" };
   }
-  const text = status.state === "connected"
+  const text = t(status.state === "connected"
     ? "Подключено"
     : status.state === "reconnecting"
       ? "Восстанавливаем связь"
       : status.state === "reauth_required"
         ? "Войти заново"
-        : "Войти в Telegram";
+        : "Войти в Telegram");
   return { id: "telegram", complete, text, targetId: "telegram-heading" };
 }
 
 function relayStep(status: TgStatus, complete: boolean): ReadinessStep {
-  const text = status.state === "connected"
+  const text = t(status.state === "connected"
     ? "Подключено"
     : status.state === "reconnecting" || status.state === "connecting"
       ? "Подключаемся к серверу"
       : status.state === "error"
         ? "Проверьте ключ доступа"
-        : "Настройте сервер";
+        : "Настройте сервер");
   return { id: "telegram", complete, text, targetId: "relay-heading" };
 }
 
 function roomStep(room: string, complete: boolean): ReadinessStep {
-  return { id: "chat", complete, text: complete ? `Комната «${room}»` : "Укажите комнату", targetId: "relay-room-input" };
+  return { id: "chat", complete, text: complete ? t("Комната «{room}»", { room }) : t("Укажите комнату"), targetId: "relay-room-input" };
 }
 
 function chatStep(chat: ChatRef | null, complete: boolean): ReadinessStep {
   return {
     id: "chat",
     complete,
-    text: chat?.title ?? "Выберите чат",
+    text: chat?.title ?? t("Выберите чат"),
     targetId: "tg-chat-label",
   };
 }
@@ -84,7 +85,7 @@ function gameStep(profileCount: number, complete: boolean): ReadinessStep {
   return {
     id: "game",
     complete,
-    text: profileCount > 0 ? `Игр: ${profileCount}` : "Добавьте игру",
+    text: profileCount > 0 ? t("Игр: {count}", { count: profileCount }) : t("Добавьте игру"),
     targetId: "profiles-heading",
   };
 }

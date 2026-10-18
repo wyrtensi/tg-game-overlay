@@ -66,6 +66,7 @@ export function configsEqual(a: Config, b: Config): boolean {
     flagsEqual(a, b) &&
     profilesEqual(a.profiles, b.profiles) &&
     (a.transport ?? "telegram") === (b.transport ?? "telegram") &&
+    (a.language ?? "auto") === (b.language ?? "auto") &&
     relaySettingsEqual(a.relay, b.relay)
   );
 }

@@ -67,6 +67,7 @@ expressed as fractions of the window (see `src/core/zones.ts`).
 | `set_direction_settings` | `{ settings: DirectionSettings }` | `Config` |
 | `set_phrase_wheel_settings` | `{ settings: PhraseWheelSettings }` | `Config` |
 | `set_feed_settings` | `{ settings: FeedSettings }` | `Config` |
+| `set_language` | `{ language: "auto" \| "en" \| "ru" \| "zh" }` | `Config`; every page re-translates on `config:changed`, the tray menu is rebuilt |
 | `set_flags` | `{ autostart: boolean, demoFeed: boolean }` | `Config` |
 | `upsert_profile` | `{ profile: Profile }` | `Config` |
 | `remove_profile` | `{ exe: string }` | `Config` |
@@ -205,6 +206,7 @@ interface Config {
   apiId?: number;       // only when the user brings their own keys
   transport: "telegram" | "relay";
   relay: RelaySettings; // { url, room, displayName }; secrets live in DPAPI storage
+  language: "auto" | "en" | "ru" | "zh"; // interface language, "auto" follows Windows
   chat?: ChatRef | null;
   directionSignals: DirectionSettings;
   phraseWheel: PhraseWheelSettings;

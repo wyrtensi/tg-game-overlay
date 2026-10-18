@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 /**
  * Turning a keydown event into a hotkey string like "Ctrl+Shift+T", and
  * validating that string before it is sent to the backend.
@@ -95,7 +96,7 @@ export function formatKeyCombo(input: KeyComboInput): string | null {
  * word (set_hotkey can reject a combo the OS or another app already owns).
  */
 export function validateHotkeyCombo(combo: string, allowSingleKey = false): string | undefined {
-  if (!combo) return "Комбинация клавиш не задана";
+  if (!combo) return t("Комбинация клавиш не задана");
 
   const parts = combo.split("+");
   const mainKey = parts[parts.length - 1];
@@ -103,7 +104,7 @@ export function validateHotkeyCombo(combo: string, allowSingleKey = false): stri
 
   if (parts.length === 1 && allowSingleKey) {
     if ((MODIFIER_LABELS as readonly string[]).includes(mainKey)) {
-      return "Нужна клавиша, а не модификатор";
+      return t("Нужна клавиша, а не модификатор");
     }
     return undefined;
   }
@@ -112,9 +113,9 @@ export function validateHotkeyCombo(combo: string, allowSingleKey = false): stri
     (MODIFIER_LABELS as readonly string[]).includes(part),
   );
 
-  if (!hasModifier) return "Нужен хотя бы один модификатор: Ctrl, Alt, Shift или Win";
+  if (!hasModifier) return t("Нужен хотя бы один модификатор: Ctrl, Alt, Shift или Win");
   if ((MODIFIER_LABELS as readonly string[]).includes(mainKey)) {
-    return "Нужна ещё одна клавиша, помимо модификатора";
+    return t("Нужна ещё одна клавиша, помимо модификатора");
   }
 
   return undefined;

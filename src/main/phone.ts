@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 /** Normalizes and validates the phone number typed into the Telegram login form. */
 
 const MIN_DIGITS = 7;
@@ -8,10 +9,10 @@ export function normalizePhone(raw: string): string {
 }
 
 export function validatePhone(normalized: string): string | undefined {
-  if (!normalized) return "Введите номер телефона";
+  if (!normalized) return t("Введите номер телефона");
   const digitCount = normalized.replace(/\D/g, "").length;
   if (digitCount < MIN_DIGITS) {
-    return "Номер должен быть в международном формате, например +79261234567";
+    return t("Номер должен быть в международном формате, например +79261234567");
   }
   return undefined;
 }

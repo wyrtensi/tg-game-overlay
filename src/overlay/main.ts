@@ -26,6 +26,7 @@ import { DirectionSignalStore } from "./direction-signal";
 import { phraseWheelItems, wheelOrigin } from "./phrase-wheel";
 import type { SendKind, SendResult } from "../telegram/send-result";
 import type { Direction } from "../telegram/direction-message";
+import { applyTranslations, resolveLanguage, setLocale, t } from "../i18n";
 
 const HISTORY_LIMIT = 300;
 const MEDIA_MEMORY_LIMIT_BYTES = 24 * 1024 * 1024;
@@ -326,8 +327,28 @@ class OverlayApp {
 
   // -- Tauri wiring, guarded so a plain-browser smoke test never crashes --
 
+  private appliedLanguage: string | null = null;
+
+  /** Follows the interface language setting ("auto" uses the Windows display language). */
+  private applyLanguage(setting: string | undefined): void {
+    const language = setting ?? "auto";
+    if (language === this.appliedLanguage) return;
+    this.appliedLanguage = language;
+    setLocale(resolveLanguage(language, navigator.languages));
+    applyTranslations();
+    this.renderStickerPanel();
+    this.render();
+  }
+
   private async wireTauri(): Promise<void> {
     if (!isTauri()) return;
+
+    await this.safeListen<{ language?: string }>("config:changed", (config) => this.applyLanguage(config.language));
+    try {
+      this.applyLanguage((await invoke<{ language?: string }>("get_config")).language);
+    } catch (err) {
+      console.error("[overlay] could not read the interface language", err);
+    }
 
     await this.safeListen<OverlayStatePayload>("overlay:state", (payload) => {
       this.kind = payload.kind;
@@ -549,7 +570,7 @@ class OverlayApp {
   }
 
   private showSendError(error: string): void {
-    this.sendStatusEl.textContent = error;
+    this.sendStatusEl.textContent = t(error);
     this.sendStatusEl.hidden = false;
   }
 
@@ -807,7 +828,7 @@ class OverlayApp {
         const retry = document.createElement("button");
         retry.type = "button";
         retry.className = "sticker-panel__retry";
-        retry.textContent = "Повторить";
+        retry.textContent = t("Повторить");
         retry.addEventListener("click", () => {
           this.stickerPacksRequested = true;
           this.stickerPickerState = { status: "loading" };
@@ -823,7 +844,7 @@ class OverlayApp {
     if (availablePacks.length === 0) {
       const empty = document.createElement("div");
       empty.className = "sticker-panel__empty";
-      empty.textContent = "В этих наборах пока нет превью стикеров";
+      empty.textContent = t("В этих наборах пока нет превью стикеров");
       this.stickerPanelEl.appendChild(empty);
       return;
     }
@@ -835,9 +856,9 @@ class OverlayApp {
     const search = document.createElement("input");
     search.type = "search";
     search.className = "sticker-search";
-    search.placeholder = "Поиск стикеров";
+    search.placeholder = t("Поиск стикеров");
     search.value = this.stickerSearchQuery;
-    search.setAttribute("aria-label", "Поиск стикеров в выбранном наборе");
+    search.setAttribute("aria-label", t("Поиск стикеров в выбранном наборе"));
     search.addEventListener("input", () => {
       this.stickerSearchQuery = search.value;
       this.renderStickerPanel(true);
@@ -850,7 +871,7 @@ class OverlayApp {
       const tab = document.createElement("button");
       tab.type = "button";
       tab.className = "sticker-tab";
-      tab.textContent = pack.title;
+      tab.textContent = t(pack.title);
       tab.setAttribute("role", "tab");
       tab.setAttribute("aria-selected", String(pack.id === this.selectedStickerPackId));
       tab.addEventListener("click", () => {
@@ -874,7 +895,7 @@ class OverlayApp {
     const refresh = document.createElement("button");
     refresh.type = "button";
     refresh.className = "sticker-panel__refresh";
-    refresh.textContent = "Обновить";
+    refresh.textContent = t("Обновить");
     refresh.addEventListener("click", () => {
       this.stickerPacksRequested = true;
       this.safeInvoke("tg_request_stickers", { refresh: true });
@@ -887,7 +908,7 @@ class OverlayApp {
     if (stickers.length === 0) {
       const empty = document.createElement("div");
       empty.className = "sticker-panel__empty";
-      empty.textContent = "Ничего не найдено";
+      empty.textContent = t("Ничего не найдено");
       this.stickerPanelEl.appendChild(empty);
       if (focusSearch) search.focus();
       return;
@@ -908,12 +929,12 @@ class OverlayApp {
           video.loop = true;
           video.playsInline = true;
           video.autoplay = true;
-          video.setAttribute("aria-label", sticker.emoji ?? "Анимированный стикер");
+          video.setAttribute("aria-label", sticker.emoji ?? t("Анимированный стикер"));
           button.appendChild(video);
         } else if (sticker.dataUrl.startsWith("data:application/x-tgsticker")) {
           const animation = document.createElement("span");
           animation.className = "sticker-item__animation";
-          animation.setAttribute("aria-label", sticker.emoji ?? "Анимированный стикер");
+          animation.setAttribute("aria-label", sticker.emoji ?? t("Анимированный стикер"));
           button.appendChild(animation);
           void this.mountPickerLottie(animation, sticker.dataUrl, renderVersion);
         } else {
@@ -1189,12 +1210,13 @@ class OverlayApp {
     this.markupSaveEl.disabled = !session.canSave();
     this.markupCustomizeEl.hidden = snapshot.step === "active";
     this.markupCancelCustomizeEl.hidden = snapshot.step !== "active";
-    this.markupHintEl.textContent =
+    this.markupHintEl.textContent = t(
       snapshot.step === "inactive"
         ? "Выделите область, где должны появляться сообщения"
         : snapshot.step === "active"
           ? "Выделите область открытого чата или оставьте автоматическую"
-          : "Готово. Сохраните или при желании настройте область открытого чата.";
+          : "Готово. Сохраните или при желании настройте область открытого чата.",
+    );
   }
 
   // -- Message media --
@@ -1233,7 +1255,8 @@ class OverlayApp {
       const bubble = document.createElement("div");
       bubble.className = "msg-text";
       if (content.showAuthor) bubble.append(this.buildAuthorEl(message));
-      bubble.append(document.createTextNode(message.text));
+      // Only the worker's media placeholder is translated, never what people wrote.
+      bubble.append(document.createTextNode(message.text === "[стикер]" ? t("[стикер]") : message.text));
       bubble.append(this.buildTimeEl(message.at));
       children.push(bubble);
     } else {
@@ -1274,7 +1297,7 @@ class OverlayApp {
       container.classList.add("msg-media--photo-preview");
       container.tabIndex = 0;
       container.setAttribute("role", "button");
-      container.setAttribute("aria-label", "Открыть изображение");
+      container.setAttribute("aria-label", t("Открыть изображение"));
       container.addEventListener("click", () => this.openPhoto(media));
       container.addEventListener("keydown", (event) => {
         if (event.key === "Enter" || event.key === " ") {

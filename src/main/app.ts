@@ -30,9 +30,10 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { currentLoginStep, describeTelegramStatus, reconnectAction, shouldClearLoginInput } from "./telegram-status";
 import { readinessState } from "./readiness";
 import { focusReadinessTarget, readinessView } from "./readiness-view";
-import type { ChatRef, Config, DirectionSettings, FeedAppearance, LoginStep, MessageLayout, PhraseWheelSettings, Profile, ProfileCandidate, ProfileMode, RelaySecretState, RelaySettings, TgStatus, Transport } from "./types";
+import type { ChatRef, Config, DirectionSettings, FeedAppearance, LoginStep, MessageLayout, PhraseWheelSettings, Profile, ProfileCandidate, ProfileMode, LanguageSetting, RelaySecretState, RelaySettings, TgStatus, Transport } from "./types";
 import { normalizeDirectionSettings, validateDirectionSettings } from "./direction-settings";
 import { normalizePhraseWheelSettings, validatePhrase } from "./phrase-wheel-settings";
+import { applyTranslations, resolveLanguage, setLocale, t } from "../i18n";
 
 /**
  * Entry point for the settings (main) window. Renders from a single `config`
@@ -71,7 +72,7 @@ function byId<T extends HTMLElement>(id: string): T {
 }
 
 function reportBackendError(err: unknown): void {
-  const message = typeof err === "string" ? err : err instanceof Error ? err.message : "Неизвестная ошибка";
+  const message = t(typeof err === "string" ? err : err instanceof Error ? err.message : "Неизвестная ошибка");
   const statusEl = document.getElementById("global-status");
   if (statusEl) statusEl.textContent = message;
   console.error("[tg-game-overlay]", err);
@@ -112,6 +113,8 @@ async function invokeConfig(command: string, args?: Record<string, unknown>): Pr
     }
     case "tg_clear_api_keys":
       return demoBackend.clearApiKeys();
+    case "set_language":
+      return demoBackend.setLanguage((args as { language: LanguageSetting }).language);
     case "set_transport":
       return demoBackend.setTransport((args as { transport: Transport }).transport);
     case "set_relay_settings":
@@ -178,7 +181,21 @@ async function subscribeEvent<T>(name: string, handler: (payload: T) => void): P
 
 function applyConfig(next: Config): void {
   config = next;
+  applyLocale();
   render();
+}
+
+let appliedLanguage: string | null = null;
+
+/** Switches the interface language when the setting (or the first config) arrives. */
+function applyLocale(): void {
+  const setting = config.language ?? "auto";
+  if (setting === appliedLanguage) return;
+  appliedLanguage = setting;
+  setLocale(resolveLanguage(setting, typeof navigator === "undefined" ? [] : navigator.languages));
+  applyTranslations();
+  // Placeholders that render functions leave alone when the field has text.
+  renderedLoginStep = undefined;
 }
 
 function render(): void {
@@ -225,13 +242,13 @@ function buildModeSwitch(profile: Profile): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "mode-switch";
   wrap.setAttribute("role", "group");
-  wrap.setAttribute("aria-label", `Режим для ${profile.title}`);
+  wrap.setAttribute("aria-label", t("Режим для {title}", { title: profile.title }));
 
   for (const { mode, label, title } of MODE_OPTIONS) {
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.textContent = label;
-    btn.title = title;
+    btn.textContent = t(label);
+    btn.title = t(title);
     btn.setAttribute("aria-pressed", String(profile.mode === mode));
     btn.addEventListener("click", () => {
       if (profile.mode === mode) return;
@@ -261,7 +278,7 @@ function buildProfileCard(profile: Profile): HTMLElement {
   titleInput.type = "text";
   titleInput.className = "profile-title-input";
   titleInput.value = profile.title;
-  titleInput.setAttribute("aria-label", `Название для ${profile.exe}`);
+  titleInput.setAttribute("aria-label", t("Название для {exe}", { exe: profile.exe }));
   titleInput.addEventListener("change", () => {
     const title = titleInput.value.trim() || profile.exe;
     void updateProfile({ ...profile, title });
@@ -277,9 +294,9 @@ function buildProfileCard(profile: Profile): HTMLElement {
 
   const markupBtn = document.createElement("button");
   markupBtn.type = "button";
-  markupBtn.textContent = "Зоны";
+  markupBtn.textContent = t("Зоны");
   markupBtn.disabled = !zonesApply;
-  markupBtn.title = zonesApply ? "Настроить зоны на игровом окне" : "Игра заблокирована — зоны не используются";
+  markupBtn.title = t(zonesApply ? "Настроить зоны на игровом окне" : "Игра заблокирована — зоны не используются");
   markupBtn.addEventListener("click", () => {
     void invokeVoid("toggle_markup", { on: true }).catch(reportBackendError);
   });
@@ -288,8 +305,8 @@ function buildProfileCard(profile: Profile): HTMLElement {
   const removeBtn = document.createElement("button");
   removeBtn.type = "button";
   removeBtn.className = "btn--danger";
-  removeBtn.textContent = "Удалить";
-  removeBtn.setAttribute("aria-label", `Удалить ${profile.title}`);
+  removeBtn.textContent = t("Удалить");
+  removeBtn.setAttribute("aria-label", t("Удалить {title}", { title: profile.title }));
   removeBtn.addEventListener("click", () => {
     void invokeConfig("remove_profile", { exe: profile.exe }).then(applyConfig).catch(reportBackendError);
   });
@@ -302,7 +319,7 @@ function buildProfileCard(profile: Profile): HTMLElement {
   mode.className = "profile-card__field";
   const modeLabel = document.createElement("span");
   modeLabel.className = "profile-card__label";
-  modeLabel.textContent = "Режим чата";
+  modeLabel.textContent = t("Режим чата");
   mode.append(modeLabel, buildModeSwitch(profile));
   details.appendChild(mode);
 
@@ -316,10 +333,10 @@ function buildProfileCard(profile: Profile): HTMLElement {
     field.className = "profile-card__zone";
     const name = document.createElement("span");
     name.className = "profile-card__label";
-    name.textContent = label;
+    name.textContent = t(label);
     const summary = document.createElement("span");
     summary.className = "zone-summary";
-    summary.textContent = zonesApply ? formatZoneSummary(zone) : "Не используется";
+    summary.textContent = zonesApply ? formatZoneSummary(zone) : t("Не используется");
     field.append(name, summary);
     zones.appendChild(field);
   }
@@ -335,7 +352,7 @@ function renderProfileCandidates(): void {
 
   const placeholder = document.createElement("option");
   placeholder.value = "";
-  placeholder.textContent = profileCandidates.length ? "Выберите окно запущенной игры" : "Нет доступных игровых окон";
+  placeholder.textContent = t(profileCandidates.length ? "Выберите окно запущенной игры" : "Нет доступных игровых окон");
   select.appendChild(placeholder);
   select.disabled = profileCandidates.length === 0;
 
@@ -361,7 +378,7 @@ async function refreshProfileCandidates(): Promise<void> {
     }
     errorEl.textContent = "";
   } catch (err) {
-    errorEl.textContent = err instanceof Error ? err.message : "Не удалось получить список игровых окон";
+    errorEl.textContent = t(err instanceof Error ? err.message : "Не удалось получить список игровых окон");
   } finally {
     refresh.disabled = false;
   }
@@ -376,7 +393,7 @@ function wireProfileAdder(): void {
   const addProfile = (value: string): void => {
     const exe = normalizeProfileExecutable(value);
     if (!exe) {
-      errorEl.textContent = "Укажите имя файла с расширением .exe";
+      errorEl.textContent = t("Укажите имя файла с расширением .exe");
       return;
     }
 
@@ -388,7 +405,7 @@ function wireProfileAdder(): void {
         applyConfig(next);
       })
       .catch((err) => {
-        errorEl.textContent = err instanceof Error ? err.message : "Не удалось добавить игру";
+        errorEl.textContent = t(err instanceof Error ? err.message : "Не удалось добавить игру");
       });
   };
 
@@ -405,7 +422,7 @@ function wireProfileAdder(): void {
     }
 
     if (!hasTauri()) {
-      errorEl.textContent = "Выбор файла доступен в приложении Windows.";
+      errorEl.textContent = t("Выбор файла доступен в приложении Windows.");
       return;
     }
 
@@ -421,7 +438,7 @@ function wireProfileAdder(): void {
         addProfile(path);
       })
       .catch((err) => {
-        errorEl.textContent = err instanceof Error ? err.message : "Не удалось открыть выбор файла";
+        errorEl.textContent = t(err instanceof Error ? err.message : "Не удалось открыть выбор файла");
       });
   });
 
@@ -499,7 +516,7 @@ function wireHotkeyField(field: HotkeyFieldConfig): void {
       .catch((err) => {
         input.value = field.getValue();
         input.classList.add("is-invalid");
-        errorEl.textContent = typeof err === "string" ? err : "Не удалось задать комбинацию клавиш";
+        errorEl.textContent = t(typeof err === "string" ? err : "Не удалось задать комбинацию клавиш");
       });
   });
 
@@ -522,8 +539,8 @@ function renderHotkeys(): void {
 
 function renderReadiness(): void {
   const relay = isRelay();
-  byId<HTMLElement>("readiness-telegram-label").textContent = relay ? "1. Сервер" : "1. Telegram";
-  byId<HTMLElement>("readiness-chat-label").textContent = relay ? "2. Комната" : "2. Чат";
+  byId<HTMLElement>("readiness-telegram-label").textContent = relay ? t("1. Сервер") : "1. Telegram";
+  byId<HTMLElement>("readiness-chat-label").textContent = t(relay ? "2. Комната" : "2. Чат");
   const slots = readinessView(readinessState(tgStatus, config, { builtinKeys }));
   for (const slot of slots) {
     const button = byId<HTMLButtonElement>(`readiness-${slot.id}`);
@@ -531,6 +548,7 @@ function renderReadiness(): void {
     status.textContent = slot.text;
     button.disabled = slot.disabled;
     button.dataset.complete = String(slot.complete);
+    button.dataset.badge = t(slot.complete ? "Готово" : slot.id === "ready" ? "Осталось" : "Дальше");
     if (slot.targetId) {
       button.dataset.targetId = slot.targetId;
     } else {
@@ -578,7 +596,7 @@ function saveDirectionSettings(): void {
       applyConfig(next);
     })
     .catch((err) => {
-      errorEl.textContent = typeof err === "string" ? err : "Не удалось сохранить указатели";
+      errorEl.textContent = t(typeof err === "string" ? err : "Не удалось сохранить указатели");
     });
 }
 
@@ -609,7 +627,7 @@ function renderDirectionSettings(): void {
   byId<HTMLInputElement>("direction-left-key").value = settings.leftKey;
   byId<HTMLInputElement>("direction-right-key").value = settings.rightKey;
   byId<HTMLInputElement>("direction-display-ms").value = String(settings.displayMs);
-  byId<HTMLElement>("direction-display-value").textContent = `${(settings.displayMs / 1000).toFixed(1)} с`;
+  byId<HTMLElement>("direction-display-value").textContent = t("{n} с", { n: (settings.displayMs / 1000).toFixed(1) });
 }
 
 // ---- Phrase wheel -----------------------------------------------------
@@ -643,7 +661,7 @@ function savePhraseWheelSettings(): void {
   }
   const settings = normalizePhraseWheelSettings(raw);
   if (settings.phrases.length < 2 || settings.phrases.length > 8) {
-    reportPhraseWheelError("Добавьте от 2 до 8 фраз");
+    reportPhraseWheelError(t("Добавьте от 2 до 8 фраз"));
     return;
   }
   void invokeConfig("set_phrase_wheel_settings", { settings })
@@ -651,7 +669,7 @@ function savePhraseWheelSettings(): void {
       reportPhraseWheelError("");
       applyConfig(next);
     })
-    .catch((err) => reportPhraseWheelError(typeof err === "string" ? err : "Не удалось сохранить колесо фраз"));
+    .catch((err) => reportPhraseWheelError(t(typeof err === "string" ? err : "Не удалось сохранить колесо фраз")));
 }
 
 function renderPhraseWheelSettings(): void {
@@ -672,7 +690,7 @@ function renderPhraseWheelSettings(): void {
     input.value = phrase;
     input.maxLength = 160;
     input.dataset.phraseWheelText = "true";
-    input.setAttribute("aria-label", `Фраза ${index + 1}`);
+    input.setAttribute("aria-label", t("Фраза {n}", { n: index + 1 }));
     input.addEventListener("change", savePhraseWheelSettings);
     row.appendChild(input);
 
@@ -697,7 +715,7 @@ function renderPhraseWheelSettings(): void {
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "btn btn--small";
-    remove.textContent = "Удалить";
+    remove.textContent = t("Удалить");
     remove.disabled = settings.phrases.length <= 2;
     remove.addEventListener("click", () => {
       const phrases = settings.phrases.filter((_, itemIndex) => itemIndex !== index);
@@ -728,7 +746,7 @@ function wirePhraseWheelSettings(): void {
   });
   byId<HTMLButtonElement>("phrase-wheel-add").addEventListener("click", () => {
     if (config.phraseWheel.phrases.length >= 8) return;
-    config = { ...config, phraseWheel: { ...config.phraseWheel, phrases: [...config.phraseWheel.phrases, "Новая фраза"] } };
+    config = { ...config, phraseWheel: { ...config.phraseWheel, phrases: [...config.phraseWheel.phrases, t("Новая фраза")] } };
     renderPhraseWheelSettings();
     savePhraseWheelSettings();
   });
@@ -880,7 +898,7 @@ function wireFeedInputs(): void {
     const toggle = byId<HTMLButtonElement>("preview-bg-toggle");
     const isLight = surface.classList.toggle("feed-preview__surface--light");
     toggle.setAttribute("aria-pressed", String(isLight));
-    toggle.textContent = isLight ? "Тёмный фон" : "Светлый фон";
+    toggle.textContent = t(isLight ? "Тёмный фон" : "Светлый фон");
   });
 }
 
@@ -920,9 +938,17 @@ function wireFlagInputs(): void {
 
   autostart.addEventListener("change", handler);
   demoFeed.addEventListener("change", handler);
+
+  const language = byId<HTMLSelectElement>("language-select");
+  language.addEventListener("change", () => {
+    void invokeConfig("set_language", { language: language.value as LanguageSetting })
+      .then(applyConfig)
+      .catch(reportBackendError);
+  });
 }
 
 function renderFlags(): void {
+  byId<HTMLSelectElement>("language-select").value = config.language ?? "auto";
   byId<HTMLInputElement>("autostart-checkbox").checked = config.autostart;
   byId<HTMLInputElement>("demo-feed-checkbox").checked = config.demoFeed;
 }
@@ -1009,19 +1035,19 @@ function renderLoginForm(): void {
   const ui = LOGIN_STEP_UI[step];
   const input = byId<HTMLInputElement>("tg-login-input");
   const busy = tgStatus.state === "connecting";
-  const hint = step === "code" && tgStatus.phone ? `Код отправлен на ${tgStatus.phone}. Проверьте Telegram или SMS` : ui.hint;
+  const hint = step === "code" && tgStatus.phone ? t("Код отправлен на {phone}. Проверьте Telegram или SMS", { phone: tgStatus.phone }) : t(ui.hint);
 
-  byId<HTMLLabelElement>("tg-login-label").textContent = ui.label;
+  byId<HTMLLabelElement>("tg-login-label").textContent = t(ui.label);
   byId<HTMLElement>("tg-login-hint").textContent = hint;
   if (shouldClearLoginInput(renderedLoginStep, step)) input.value = "";
   renderedLoginStep = step;
   if (document.activeElement !== input) input.type = ui.inputType;
   input.placeholder = ui.placeholder;
   input.disabled = busy;
-  byId<HTMLButtonElement>("tg-login-submit").textContent = ui.submitLabel;
+  byId<HTMLButtonElement>("tg-login-submit").textContent = t(ui.submitLabel);
   byId<HTMLButtonElement>("tg-login-submit").disabled = busy;
 
-  byId<HTMLElement>("tg-login-error").textContent = tgStatus.state === "error" ? tgStatus.error ?? "Ошибка" : "";
+  byId<HTMLElement>("tg-login-error").textContent = tgStatus.state === "error" ? t(tgStatus.error ?? "Ошибка") : "";
 }
 
 function wireLoginForm(): void {
@@ -1045,9 +1071,9 @@ function wireLoginForm(): void {
       value = normalizePhone(raw);
       validationError = validatePhone(value);
     } else if (step === "code") {
-      validationError = raw.trim() ? undefined : "Введите код";
+      validationError = raw.trim() ? undefined : t("Введите код");
     } else {
-      validationError = raw ? undefined : "Введите пароль";
+      validationError = raw ? undefined : t("Введите пароль");
     }
 
     if (validationError) {
@@ -1086,7 +1112,7 @@ function renderChatList(list: ChatRef[]): void {
     details.textContent = [
       chat.username ? `@${chat.username}` : null,
       `ID: ${chat.id}`,
-      canMirror ? null : "Откройте этот чат в Telegram и обновите список",
+      canMirror ? null : t("Откройте этот чат в Telegram и обновите список"),
     ].filter(Boolean).join(" · ");
     btn.append(title, details);
     if (isChatEqual(chat, config.chat)) btn.setAttribute("aria-current", "true");
@@ -1114,7 +1140,7 @@ function renderChatList(list: ChatRef[]): void {
       const retry = document.createElement("button");
       retry.type = "button";
       retry.className = "btn";
-      retry.textContent = "Повторить загрузку";
+      retry.textContent = t("Повторить загрузку");
       retry.addEventListener("click", () => requestTelegramDialogs());
       li.appendChild(retry);
     }
@@ -1149,14 +1175,14 @@ function renderChatPicker(): void {
   search.disabled = !connected;
   const open = connected && chatPickerOpen;
   picker.hidden = !open;
-  toggle.textContent = open ? "Отмена" : "Сменить";
+  toggle.textContent = t(open ? "Отмена" : "Сменить");
 
   if (!connected) {
-    currentEl.textContent = "Подключите Telegram, чтобы выбрать чат";
+    currentEl.textContent = t("Подключите Telegram, чтобы выбрать чат");
   } else if (config.chat) {
-    currentEl.textContent = `В оверлее: ${config.chat.title} · ${describeChatKind(config.chat.kind, config.chat.isBot)}. Другие чаты не показываются.`;
+    currentEl.textContent = t("В оверлее: {chat}. Другие чаты не показываются.", { chat: `${config.chat.title} · ${describeChatKind(config.chat.kind, config.chat.isBot)}` });
   } else {
-    currentEl.textContent = "Чат не выбран — оверлею пока нечего показывать";
+    currentEl.textContent = t("Чат не выбран — оверлею пока нечего показывать");
   }
 }
 
@@ -1188,13 +1214,13 @@ function renderApiKeys(): void {
   if (document.activeElement !== idInput) {
     idInput.value = config.apiId ? String(config.apiId) : "";
   }
-  idInput.placeholder = builtinKeys ? "Используются встроенные ключи" : "Например, 1234567";
-  byId<HTMLElement>("tg-api-keys-hint").textContent = builtinKeys
+  idInput.placeholder = t(builtinKeys ? "Используются встроенные ключи" : "Например, 1234567");
+  byId<HTMLElement>("tg-api-keys-hint").textContent = t(builtinKeys
     ? "Приложение уже работает со встроенными ключами — свои нужны только для отладки или обхода лимитов, большинству это не требуется."
-    : "В этой сборке нет встроенных ключей. Получите свои api_id и api_hash на my.telegram.org → API development tools и сохраните их здесь: они остаются только на этом компьютере.";
+    : "В этой сборке нет встроенных ключей. Получите свои api_id и api_hash на my.telegram.org → API development tools и сохраните их здесь: они остаются только на этом компьютере.");
   const clear = byId<HTMLButtonElement>("tg-api-keys-clear");
   clear.hidden = !config.apiId;
-  clear.textContent = builtinKeys ? "Вернуть встроенные ключи" : "Удалить ключи";
+  clear.textContent = t(builtinKeys ? "Вернуть встроенные ключи" : "Удалить ключи");
   if (!builtinKeys && !config.apiId && !apiKeysAutoOpened) {
     apiKeysAutoOpened = true;
     byId<HTMLDetailsElement>("tg-api-keys").open = true;
@@ -1233,9 +1259,9 @@ function renderDemoFeedHint(): void {
   const hint = byId<HTMLElement>("demo-feed-hint");
 
   checkbox.disabled = connected;
-  hint.textContent = connected
+  hint.textContent = t(connected
     ? "Недоступно: Telegram подключён, в ленте настоящие сообщения."
-    : "Работает только пока Telegram не подключён.";
+    : "Работает только пока Telegram не подключён.");
 }
 
 function renderTelegramSection(): void {
@@ -1247,8 +1273,8 @@ function renderTelegramSection(): void {
 
   if (connected) {
     byId<HTMLElement>("tg-connected-line").textContent = tgStatus.phone
-      ? `Подключено: ${tgStatus.phone}`
-      : "Подключено";
+      ? t("Подключено: {phone}", { phone: tgStatus.phone })
+      : t("Подключено");
   } else {
     renderLoginForm();
     if (chatPickerOpen) chatPickerOpen = false; // picking a chat only makes sense while connected
@@ -1285,11 +1311,11 @@ function renderTransport(): void {
   const relay = isRelay();
   byId<HTMLButtonElement>("transport-telegram").setAttribute("aria-pressed", String(!relay));
   byId<HTMLButtonElement>("transport-relay").setAttribute("aria-pressed", String(relay));
-  byId<HTMLElement>("transport-hint").textContent = TRANSPORT_HINTS[relay ? "relay" : "telegram"];
+  byId<HTMLElement>("transport-hint").textContent = t(TRANSPORT_HINTS[relay ? "relay" : "telegram"]);
   byId<HTMLElement>("telegram-card").hidden = relay;
   byId<HTMLElement>("relay-card").hidden = !relay;
   const nav = byId<HTMLAnchorElement>("nav-transport-link");
-  nav.textContent = relay ? "Сервер" : "Telegram";
+  nav.textContent = relay ? t("Сервер") : "Telegram";
   nav.href = relay ? "#relay-heading" : "#telegram-heading";
 }
 
@@ -1300,7 +1326,7 @@ function wireTransport(): void {
       const errorEl = byId<HTMLElement>("transport-error");
       errorEl.textContent = "";
       void invokeConfig("set_transport", { transport }).then(applyConfig).catch((err) => {
-        errorEl.textContent = typeof err === "string" ? err : "Не удалось переключить способ связи";
+        errorEl.textContent = t(typeof err === "string" ? err : "Не удалось переключить способ связи");
       });
     });
   }
@@ -1328,17 +1354,17 @@ function renderRelaySection(): void {
     const input = byId<HTMLInputElement>(id);
     if (document.activeElement !== input && !input.dataset.dirty) input.value = values[id];
   }
-  byId<HTMLInputElement>("relay-access-key-input").placeholder = relaySecrets.hasAccessKey
+  byId<HTMLInputElement>("relay-access-key-input").placeholder = t(relaySecrets.hasAccessKey
     ? "Сохранён — оставьте пустым, чтобы не менять"
-    : "Не меньше 16 символов";
+    : "Не меньше 16 символов");
   byId<HTMLInputElement>("relay-password-input").placeholder = relaySecrets.hasPassword
-    ? "Сохранён — оставьте пустым, чтобы не менять"
+    ? t("Сохранён — оставьте пустым, чтобы не менять")
     : "";
   byId<HTMLButtonElement>("relay-forget").hidden = !relaySecrets.hasAccessKey && !relaySecrets.hasPassword;
 
   const relayActive = isRelay();
   const badge = byId<HTMLElement>("relay-status-badge");
-  badge.textContent = relayActive ? describeTelegramStatus(tgStatus) : "Не используется";
+  badge.textContent = relayActive ? describeTelegramStatus(tgStatus) : t("Не используется");
   badge.dataset.state = relayActive ? tgStatus.state : "offline";
   const retry = byId<HTMLButtonElement>("relay-reconnect-now");
   const action = reconnectAction(tgStatus);
@@ -1347,7 +1373,7 @@ function renderRelaySection(): void {
   const errorEl = byId<HTMLElement>("relay-error");
   if (!errorEl.dataset.local) {
     errorEl.textContent = relayActive && (tgStatus.state === "error" || tgStatus.state === "offline")
-      ? tgStatus.error ?? ""
+      ? t(tgStatus.error ?? "")
       : "";
   }
 }
@@ -1364,7 +1390,7 @@ function wireRelayForm(): void {
     errorEl.textContent = message;
   };
   const backendMessage = (err: unknown): string =>
-    typeof err === "string" ? err : err instanceof Error ? err.message : "Не удалось сохранить";
+    t(typeof err === "string" ? err : err instanceof Error ? err.message : "Не удалось сохранить");
 
   byId<HTMLFormElement>("relay-form").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -1377,11 +1403,11 @@ function wireRelayForm(): void {
     const passwordInput = byId<HTMLInputElement>("relay-password-input");
     const accessKey = keyInput.value.trim();
     const password = passwordInput.value;
-    if (!settings.url) return showError("Укажите адрес сервера, например 203.0.113.10:8790");
-    if (!settings.room) return showError("Укажите комнату");
-    if (!accessKey && !relaySecrets.hasAccessKey) return showError("Укажите ключ доступа к серверу");
-    if (accessKey && accessKey.length < 16) return showError("Ключ доступа короче 16 символов");
-    if (!password && !relaySecrets.hasPassword) return showError("Придумайте пароль комнаты и передайте его друзьям");
+    if (!settings.url) return showError(t("Укажите адрес сервера, например 203.0.113.10:8790"));
+    if (!settings.room) return showError(t("Укажите комнату"));
+    if (!accessKey && !relaySecrets.hasAccessKey) return showError(t("Укажите ключ доступа к серверу"));
+    if (accessKey && accessKey.length < 16) return showError(t("Ключ доступа короче 16 символов"));
+    if (!password && !relaySecrets.hasPassword) return showError(t("Придумайте пароль комнаты и передайте его друзьям"));
     delete errorEl.dataset.local;
     errorEl.textContent = "";
 
@@ -1423,10 +1449,10 @@ interface OverlayStatePayload {
 }
 
 const OVERLAY_STATE_LABELS: Record<OverlayStatePayload["kind"], (exe: string | null) => string> = {
-  off: () => "Оверлей выключен",
-  hidden: () => "Игра свёрнута — оверлей скрыт",
-  inactive: (exe) => (exe ? `Наготове: ${exe}` : "Наготове"),
-  active: (exe) => (exe ? `Чат открыт: ${exe}` : "Чат открыт"),
+  off: () => t("Оверлей выключен"),
+  hidden: () => t("Игра свёрнута — оверлей скрыт"),
+  inactive: (exe) => (exe ? t("Наготове: {exe}", { exe }) : t("Наготове")),
+  active: (exe) => (exe ? t("Чат открыт: {exe}", { exe }) : t("Чат открыт")),
 };
 
 function renderOverlayStatus(state: OverlayStatePayload): void {
@@ -1454,6 +1480,7 @@ async function init(): Promise<void> {
   }
   await loadRelaySecrets();
 
+  applyLocale();
   wireTransport();
   wireRelayForm();
   wireTelegramSection();
@@ -1469,8 +1496,7 @@ async function init(): Promise<void> {
 
   await safeListen<Config>("config:changed", (next) => {
     if (configsEqual(config, next)) return;
-    config = next;
-    render();
+    applyConfig(next);
   });
 
   await safeListen<OverlayStatePayload>("overlay:state", renderOverlayStatus);

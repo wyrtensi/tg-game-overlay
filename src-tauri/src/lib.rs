@@ -1,4 +1,5 @@
 mod config;
+mod i18n;
 mod input;
 mod phrase_wheel;
 mod runtime_cache;
@@ -550,6 +551,18 @@ fn set_feed_settings(app: AppHandle, settings: FeedSettings) -> Result<Config, S
         config.outgoing_bubble_color = color;
     }
     save_config(&app, config)
+}
+
+#[tauri::command]
+fn set_language(app: AppHandle, language: String) -> Result<Config, String> {
+    if !matches!(language.as_str(), "auto" | "en" | "ru" | "zh") {
+        return Err(format!("Неизвестный язык: {language}"));
+    }
+    let mut config = get_config(app.clone());
+    config.language = language;
+    let config = save_config(&app, config)?;
+    refresh_tray_text(&app);
+    Ok(config)
 }
 
 #[tauri::command]
@@ -1716,13 +1729,6 @@ fn open_main_window(app: AppHandle) {
 }
 
 fn demo_feed(app: AppHandle) {
-    let lines = [
-        ("Стас", "зайдёшь на катку?"),
-        ("Стас", "смотри что нашёл в патче"),
-        ("Аня", "не забудь про созвон в 19:00"),
-        ("Стас", "го в 21, я освобожусь"),
-        ("Аня", "сюда же прилетит картинка"),
-    ];
     let mut index = 0usize;
 
     std::thread::spawn(move || loop {
@@ -1736,6 +1742,7 @@ fn demo_feed(app: AppHandle) {
             continue;
         }
 
+        let lines = i18n::demo_lines(current_locale(&app));
         let (author, text) = lines[index % lines.len()];
         index += 1;
         log(&format!("demo message from {author}"));
@@ -1769,14 +1776,7 @@ fn set_paused(app: &AppHandle, paused: bool) {
     *app.state::<AppState>().paused.lock().unwrap() = paused;
 
     // The tray icon is the only place this state is visible from.
-    if let Some(tray) = app.tray_by_id("tray") {
-        let tooltip = if paused {
-            "Telegram overlay - пауза"
-        } else {
-            "Telegram overlay"
-        };
-        let _ = tray.set_tooltip(Some(tooltip));
-    }
+    refresh_tray_text(app);
     let _ = app.emit("overlay:paused", serde_json::json!({ "paused": paused }));
 
     if paused {
@@ -1815,14 +1815,36 @@ fn set_paused(app: &AppHandle, paused: bool) {
     }
 }
 
+fn current_locale(app: &AppHandle) -> i18n::Locale {
+    i18n::resolve(&app.state::<AppState>().config.lock().unwrap().language)
+}
+
+fn tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let text = i18n::tray(current_locale(app));
+    let paused = *app.state::<AppState>().paused.lock().unwrap();
+    let open = MenuItem::with_id(app, "open", text.settings, true, None::<&str>)?;
+    let pause = CheckMenuItem::with_id(app, "pause", text.pause, true, paused, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", text.quit, true, None::<&str>)?;
+    Menu::with_items(app, &[&open, &pause, &quit])
+}
+
+fn refresh_tray_text(app: &AppHandle) {
+    let Some(tray) = app.tray_by_id("tray") else {
+        return;
+    };
+    if let Ok(menu) = tray_menu(app) {
+        let _ = tray.set_menu(Some(menu));
+    }
+    let text = i18n::tray(current_locale(app));
+    let paused = *app.state::<AppState>().paused.lock().unwrap();
+    let _ = tray.set_tooltip(Some(if paused { text.tooltip_paused } else { text.tooltip }));
+}
+
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "Настройки", true, None::<&str>)?;
-    let pause = CheckMenuItem::with_id(app, "pause", "Пауза", true, false, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &pause, &quit])?;
+    let menu = tray_menu(app)?;
 
     let mut builder = TrayIconBuilder::with_id("tray")
-        .tooltip("Telegram overlay")
+        .tooltip(i18n::tray(current_locale(app)).tooltip)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {
@@ -1946,6 +1968,7 @@ pub fn run() {
             tg_worker_ready,
             set_feed_settings,
             set_flags,
+            set_language,
             set_hotkey,
             set_markup_hotkey,
             set_direction_settings,
@@ -2005,7 +2028,7 @@ pub fn run() {
             let first_run = !config_path.exists();
             let runtime_cache_path = runtime_cache_path(&config_path);
             let runtime_cache = RuntimeCacheV1::load(&runtime_cache_path);
-            let config = match Config::load(&config_path) {
+            let mut config = match Config::load(&config_path) {
                 Ok(config) => config,
                 Err(error) => {
                     // Keep the broken file around: losing the game profiles
@@ -2018,6 +2041,10 @@ pub fn run() {
                     Config::default()
                 }
             };
+            if first_run {
+                // A fresh install greets the user with phrases in their language.
+                config.phrase_wheel.phrases = i18n::default_phrases(i18n::resolve(&config.language));
+            }
 
             app.manage(AppState {
                 config: Mutex::new(config.clone()),

@@ -34,6 +34,7 @@ import type {
   StickerPack,
   TgStatus,
 } from "../telegram/types";
+import { resolveLanguage, setLocale, t } from "../i18n";
 
 /** Raw image bytes that stay under the server's 1 500 000-character message cap after padding and two base64 passes. */
 export const MAX_RELAY_IMAGE_BYTES = 800 * 1024;
@@ -51,6 +52,7 @@ export interface RelaySettings {
 export interface RelayWorkerConfig {
   transport?: "telegram" | "relay";
   relay?: RelaySettings | null;
+  language?: string;
 }
 
 export interface RelayCredentials {
@@ -141,6 +143,7 @@ export class RelayWorker {
 
   private async applyConfig(config: RelayWorkerConfig, force: boolean): Promise<void> {
     const wasActive = this.active;
+    setLocale(resolveLanguage(config.language, typeof navigator === "undefined" ? [] : navigator.languages ?? []));
     this.active = config.transport === "relay";
     this.settings = config.relay ?? null;
     if (!this.active) {
@@ -257,7 +260,7 @@ export class RelayWorker {
   }
 
   private async present(envelope: Envelope, at: number, generation: number): Promise<void> {
-    const author = envelope.author.trim().slice(0, 64) || DEFAULT_AUTHOR;
+    const author = envelope.author.trim().slice(0, 64) || t(DEFAULT_AUTHOR);
     const outgoing = envelope.sid === this.deps.senderId;
     const base: OverlayMessage = { id: envelope.id, author, text: "", at, ...(outgoing ? { outgoing: true } : {}) };
     switch (envelope.t) {
@@ -355,7 +358,7 @@ export class RelayWorker {
     return {
       v: 1,
       id: (this.deps.newId ?? (() => crypto.randomUUID()))(),
-      author: this.settings?.displayName.trim().slice(0, 64) || DEFAULT_AUTHOR,
+      author: this.settings?.displayName.trim().slice(0, 64) || t(DEFAULT_AUTHOR),
       sid: this.deps.senderId,
       at: this.now(),
       ...fields,

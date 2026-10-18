@@ -1,4 +1,5 @@
 import type { DirectionSettings } from "./types";
+import { t } from "../i18n";
 
 export const DEFAULT_DIRECTION_SETTINGS: DirectionSettings = {
   enabled: false,
@@ -22,7 +23,7 @@ export function normalizeDirectionSettings(settings: DirectionSettings): Directi
 
 export function validateDirectionSettings(settings: DirectionSettings): string | null {
   const keys = [settings.upKey, settings.downKey, settings.leftKey, settings.rightKey].map((key) => key.toLowerCase());
-  if (keys.some((key) => key.length === 0)) return "Назначьте клавишу для каждого направления";
-  if (new Set(keys).size !== keys.length) return "Клавиша направления повторяется";
+  if (keys.some((key) => key.length === 0)) return t("Назначьте клавишу для каждого направления");
+  if (new Set(keys).size !== keys.length) return t("Клавиша направления повторяется");
   return null;
 }

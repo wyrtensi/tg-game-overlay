@@ -1,7 +1,7 @@
 import { normalizeHexColor } from "./color";
 import { validateHotkeyCombo } from "./hotkey";
 import { normalizeProfileExecutable } from "./profile-input";
-import type { ChatRef, Config, DirectionSettings, FeedSettings, Flags, PhraseWheelSettings, Profile, RelaySettings, Transport } from "./types";
+import type { ChatRef, Config, DirectionSettings, FeedSettings, Flags, PhraseWheelSettings, Profile, LanguageSetting, RelaySettings, Transport } from "./types";
 import { normalizeDirectionSettings, validateDirectionSettings } from "./direction-settings";
 import { normalizePhraseWheelSettings, validatePhrase } from "./phrase-wheel-settings";
 
@@ -36,6 +36,11 @@ export class DemoBackend {
   }
 
   getConfig(): Config {
+    return this.config;
+  }
+
+  setLanguage(language: LanguageSetting): Config {
+    this.config = { ...this.config, language };
     return this.config;
   }
 
